@@ -75,7 +75,7 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
     return changed
 
 
-async def _auto_enqueue(session: AsyncSession, feed: Feed) -> None:
+async def enqueue_auto_downloads(session: AsyncSession, feed: Feed) -> None:
     """Pre-download the N newest episodes for a feed that opted in.
 
     ``purged_at IS NULL`` matters: without it, retention deleting a recent episode would
@@ -130,7 +130,7 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         # Auto-download still runs on an unchanged feed. The trigger for pre-downloading is
         # the setting, not new content: a feed the user just opted in to would otherwise
         # wait for its next episode before anything landed on disk.
-        await _auto_enqueue(session, feed)
+        await enqueue_auto_downloads(session, feed)
         await session.commit()
         feed_refresh_total.labels(result="not_modified").inc()
         return outcome
@@ -198,7 +198,7 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
                 outcome.updated_episodes += 1
 
         await session.flush()
-        await _auto_enqueue(session, feed)
+        await enqueue_auto_downloads(session, feed)
 
     await session.commit()
 

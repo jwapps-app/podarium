@@ -104,6 +104,8 @@ export interface AppSettings {
   download_dir_max_bytes: number | null;
   refresh_interval_minutes: number;
   user_agent: string;
+  /** Starting speed for every episode. Server-side so iOS starts where the web player does. */
+  default_playback_rate: number;
 }
 
 export interface OpmlImportResult {

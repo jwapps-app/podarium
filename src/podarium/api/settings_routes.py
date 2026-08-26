@@ -17,6 +17,7 @@ def _out(row) -> SettingsOut:
         download_dir_max_bytes=row.download_dir_max_bytes,
         refresh_interval_minutes=row.refresh_interval_minutes,
         user_agent=row.user_agent,
+        default_playback_rate=row.default_playback_rate,
     )
 
 
@@ -43,6 +44,8 @@ async def update_settings(
         row.refresh_interval_minutes = body.refresh_interval_minutes
     if body.user_agent:
         row.user_agent = body.user_agent
+    if body.default_playback_rate is not None:
+        row.default_playback_rate = body.default_playback_rate
 
     # As with per-feed retention, NULL here is meaningful: it means "no ceiling".
     if body.clear_download_dir_max_bytes:

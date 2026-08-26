@@ -5,6 +5,7 @@ import { ErrorNotice, Loading } from "../components/Loading";
 import { TrashIcon } from "../components/Icons";
 import { api } from "../lib/api";
 import { formatBytes, formatRelativeExact } from "../lib/format";
+import { PLAYBACK_RATES } from "../lib/player";
 import { useSettings } from "../lib/queries";
 import type { CreatedApiToken, OpmlImportResult, RetentionMode } from "../lib/types";
 
@@ -31,6 +32,7 @@ export function SettingsPage() {
           download_dir_max_bytes: settings.download_dir_max_bytes,
           refresh_interval_minutes: settings.refresh_interval_minutes,
           user_agent: settings.user_agent,
+          default_playback_rate: settings.default_playback_rate,
         }}
       />
       <OpmlPanel />
@@ -45,6 +47,7 @@ interface GlobalValues {
   download_dir_max_bytes: number | null;
   refresh_interval_minutes: number;
   user_agent: string;
+  default_playback_rate: number;
 }
 
 function GlobalSettings({ initial }: { initial: GlobalValues }) {
@@ -53,6 +56,7 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
   const [days, setDays] = useState(String(initial.global_retention_days));
   const [interval, setInterval] = useState(String(initial.refresh_interval_minutes));
   const [userAgent, setUserAgent] = useState(initial.user_agent);
+  const [rate, setRate] = useState(String(initial.default_playback_rate));
   // Exposed in GB because a byte ceiling is unreadable at NAS scale.
   const [ceilingGb, setCeilingGb] = useState(
     initial.download_dir_max_bytes === null
@@ -73,6 +77,7 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
       global_retention_days: Number(days) || 0,
       refresh_interval_minutes: Math.max(1, Number(interval) || 60),
       user_agent: userAgent.trim() || initial.user_agent,
+      default_playback_rate: Number(rate) || 1,
       ...(trimmed === ""
         ? { clear_download_dir_max_bytes: true }
         : { download_dir_max_bytes: Math.round(Number(trimmed) * 1024 ** 3) }),
@@ -140,6 +145,21 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
           {initial.download_dir_max_bytes
             ? ` Currently ${formatBytes(initial.download_dir_max_bytes)}.`
             : ""}
+        </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="rate">Default playback speed</label>
+        <select id="rate" value={rate} onChange={(event) => setRate(event.target.value)}>
+          {PLAYBACK_RATES.map((value) => (
+            <option key={value} value={value}>
+              {value}&times;{value === 1 ? " (normal)" : ""}
+            </option>
+          ))}
+        </select>
+        <div className="field-hint">
+          Every episode starts at this speed. The player&rsquo;s speed button still changes
+          it for the current session without touching this default.
         </div>
       </div>
 

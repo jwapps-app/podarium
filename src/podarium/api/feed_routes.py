@@ -7,7 +7,7 @@ from podarium.auth import current_user
 from podarium.clients import podcastindex
 from podarium.clients.podcastindex import PodcastIndexUnavailable
 from podarium.db import get_session
-from podarium.jobs.refresh import refresh_feed
+from podarium.jobs.refresh import enqueue_auto_downloads, refresh_feed
 from podarium.jobs.retention import purge_episode
 from podarium.models import Episode, EpisodeState, Feed, User
 from podarium.schemas import FeedCreateRequest, FeedOut, FeedUpdateRequest, feed_out
@@ -143,6 +143,15 @@ async def update_feed(
         feed.retention_days = body.retention_days
 
     await session.commit()
+
+    # Turning auto-download on has to do something now. It is otherwise only acted on
+    # during a refresh, so a feed that was just fetched would sit there for up to a full
+    # refresh interval with the setting saved and nothing on disk -- indistinguishable,
+    # from the outside, from the setting not working.
+    if body.auto_download_count is not None and feed.auto_download_count > 0:
+        await enqueue_auto_downloads(session, feed)
+        await session.commit()
+
     await session.refresh(feed)
     total, unplayed = (await _counts(session, user.id, [feed.id])).get(feed.id, (0, 0))
     return feed_out(feed, episode_count=total, unplayed_count=unplayed)

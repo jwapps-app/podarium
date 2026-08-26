@@ -1,5 +1,3 @@
-import base64
-import binascii
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -8,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from podarium.auth import current_user
+from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
 from podarium.db import get_session
 from podarium.jobs.retention import purge_episode
 from podarium.models import Episode, EpisodeState, JobSource, User
@@ -15,20 +14,6 @@ from podarium.schemas import EpisodeListOut, EpisodeOut, EpisodeStateUpdate, epi
 from podarium.services import enqueue_download
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
-
-
-def _encode_cursor(first_seen_at: datetime, episode_id: int) -> str:
-    raw = f"{first_seen_at.isoformat()}|{episode_id}".encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
-
-
-def _decode_cursor(cursor: str) -> tuple[datetime, int]:
-    try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        stamp, _, episode_id = base64.urlsafe_b64decode(padded).decode().partition("|")
-        return datetime.fromisoformat(stamp), int(episode_id)
-    except (ValueError, binascii.Error) as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
 
 
 async def _get_episode_or_404(session: AsyncSession, episode_id: int) -> Episode:
@@ -88,7 +73,10 @@ async def list_episodes(
     if since is not None:
         statement = statement.where(Episode.first_seen_at > since)
     if cursor:
-        cursor_stamp, cursor_id = _decode_cursor(cursor)
+        try:
+            cursor_stamp, cursor_id = decode_cursor(cursor)
+        except InvalidCursor as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
         statement = statement.where(
             (Episode.first_seen_at < cursor_stamp)
             | ((Episode.first_seen_at == cursor_stamp) & (Episode.id < cursor_id))
@@ -99,7 +87,7 @@ async def list_episodes(
     rows = rows[:limit]
 
     items = [episode_out(episode, episode_state) for episode, episode_state in rows]
-    next_cursor = _encode_cursor(rows[-1][0].first_seen_at, rows[-1][0].id) if has_more and rows else None
+    next_cursor = encode_cursor(rows[-1][0].first_seen_at, rows[-1][0].id) if has_more and rows else None
     return EpisodeListOut(items=items, next_cursor=next_cursor)
 
 

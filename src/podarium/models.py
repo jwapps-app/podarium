@@ -19,6 +19,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     Enum,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -223,6 +224,10 @@ class AppSettings(Base):
     download_dir_max_bytes: Mapped[int | None] = mapped_column(BigInteger)
     refresh_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     user_agent: Mapped[str] = mapped_column(Text, nullable=False, default="Podarium/0.1.0")
+
+    # Starting playback speed for every episode. Stored server-side rather than in the
+    # browser so the iOS client starts at the same speed as the web player.
+    default_playback_rate: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
 
 

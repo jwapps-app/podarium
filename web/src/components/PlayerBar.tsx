@@ -2,13 +2,11 @@ import { useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 
 import { formatClock } from "../lib/format";
-import { usePlayer } from "../lib/player";
+import { PLAYBACK_RATES, usePlayer } from "../lib/player";
 import { useFeeds, useQueue } from "../lib/queries";
 import type { Episode } from "../lib/types";
 import { Artwork } from "./Artwork";
 import { Back15Icon, Forward30Icon, PauseIcon, PlayIcon } from "./Icons";
-
-const RATES = [1, 1.25, 1.5, 1.75, 2, 0.75];
 
 export function PlayerBar() {
   const player = usePlayer();
@@ -42,8 +40,9 @@ export function PlayerBar() {
   const percent = duration > 0 ? (player.position / duration) * 100 : 0;
 
   const cycleRate = () => {
-    const index = RATES.indexOf(player.playbackRate);
-    player.setPlaybackRate(RATES[(index + 1) % RATES.length]);
+    const index = PLAYBACK_RATES.indexOf(player.playbackRate);
+    // An unlisted rate (an older saved default, say) steps to the start rather than sticking.
+    player.setPlaybackRate(PLAYBACK_RATES[(index + 1) % PLAYBACK_RATES.length]);
   };
 
   return (

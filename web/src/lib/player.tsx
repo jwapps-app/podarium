@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createContext,
   useCallback,
@@ -21,6 +21,10 @@ const POSITION_REPORT_INTERVAL_MS = 15_000;
 /** Treat an episode as finished slightly before the true end: encoders and trailing
  *  silence mean `ended` sometimes never fires cleanly. */
 const COMPLETION_TAIL_SECONDS = 5;
+
+/** Offered speeds. Fine-grained near 1x, where small changes are actually perceptible,
+ *  and coarser above it where they are not. */
+export const PLAYBACK_RATES = [0.8, 0.9, 1, 1.1, 1.2, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
 interface PlayerValue {
   episode: Episode | null;
@@ -55,11 +59,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [buffering, setBuffering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playbackRate, setPlaybackRateState] = useState(1);
+  // Set from the server default once, and only while the user has not overridden it in
+  // this session -- a saved default should not yank the speed out from under someone who
+  // has just adjusted it mid-episode.
+  const rateTouchedRef = useRef(false);
 
   // Kept in refs so the reporting effect does not tear down and restart on every tick.
   const episodeRef = useRef<Episode | null>(null);
   const lastReportedRef = useRef(0);
   const advanceRef = useRef<(() => Episode | null) | null>(null);
+  const rateRef = useRef(1);
 
   if (!audioRef.current && typeof Audio !== "undefined") {
     audioRef.current = new Audio();
@@ -116,6 +125,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       audio.src = next.stream_url;
       audio.load();
+      // Assigning src resets playbackRate to 1, so the chosen speed is reapplied here
+      // rather than carrying over on its own.
+      audio.playbackRate = rateRef.current;
 
       const startAt = next.played ? 0 : next.position_seconds;
       const beginPlayback = () => {
@@ -166,7 +178,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (audio) audio.playbackRate = rate;
     setPlaybackRateState(rate);
+    rateTouchedRef.current = true;
   }, []);
+
+  const { data: appSettings } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const defaultRate = appSettings?.default_playback_rate;
+
+  useEffect(() => {
+    if (defaultRate === undefined || rateTouchedRef.current) return;
+    setPlaybackRateState(defaultRate);
+    if (audioRef.current) audioRef.current.playbackRate = defaultRate;
+  }, [defaultRate]);
 
   const stop = useCallback(() => {
     const audio = audioRef.current;
@@ -276,6 +298,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     window.addEventListener("pagehide", onUnload);
     return () => window.removeEventListener("pagehide", onUnload);
   }, []);
+
+  rateRef.current = playbackRate;
 
   const value = useMemo(
     () => ({

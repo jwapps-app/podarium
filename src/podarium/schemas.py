@@ -162,6 +162,7 @@ class SettingsOut(BaseModel):
     download_dir_max_bytes: int | None
     refresh_interval_minutes: int
     user_agent: str
+    default_playback_rate: float
 
 
 class SettingsUpdate(BaseModel):
@@ -171,16 +172,23 @@ class SettingsUpdate(BaseModel):
     clear_download_dir_max_bytes: bool = False
     refresh_interval_minutes: int | None = Field(default=None, ge=1)
     user_agent: str | None = None
+    # Bounded to what browsers and AVPlayer actually honour; outside this range playback
+    # is either unintelligible or silently clamped by the platform.
+    default_playback_rate: float | None = Field(default=None, ge=0.5, le=4.0)
 
 
 class SyncOut(BaseModel):
-    # Use this as the ``since`` on the next call. Server-supplied so client clock skew
-    # cannot open a gap in the delta.
+    # Use this as the ``since`` on the next call -- but only once next_cursor is null.
+    # Server-supplied so client clock skew cannot open a gap in the delta.
     now: datetime
     feeds: list[FeedOut]
     episodes: list[EpisodeOut]
     queue: list[QueueItemOut]
     deleted_feed_ids: list[int] = []
+    # Non-null means this response was truncated. Call again with the same `since` and this
+    # value as `cursor`; advancing `since` before the pages run out loses the remainder
+    # permanently, since those episodes will never appear in a later delta.
+    next_cursor: str | None = None
 
 
 class OpmlImportResult(BaseModel):

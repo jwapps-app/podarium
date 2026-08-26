@@ -135,14 +135,68 @@ COUNT_3="$(api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" | json 'len(d["it
 pass "refresh after purge did not re-add the episode"
 
 step "delta sync"
+# Establish a known baseline *before* taking the cursor. A previous run may have left this
+# episode played, and writing the value it already holds is correctly a no-op -- an
+# unchanged row must not be pushed into every client's delta -- so the script has to make
+# a real change to observe one.
+api -X PUT "$BASE/api/episodes/$EP_ID/state" -H 'content-type: application/json' \
+  -d '{"played":false,"position_seconds":0}' >/dev/null
+
 CURSOR="$(api "$BASE/api/sync" | json 'd["now"]')"
 EMPTY="$(api --get --data-urlencode "since=$CURSOR" "$BASE/api/sync" | json 'len(d["episodes"])')"
 [ "$EMPTY" = 0 ] || fail "sync returned changes with a current cursor"
+
 api -X PUT "$BASE/api/episodes/$EP_ID/state" -H 'content-type: application/json' \
-  -d '{"played":true}' >/dev/null
+  -d '{"played":true,"position_seconds":42}' >/dev/null
 DELTA="$(api --get --data-urlencode "since=$CURSOR" "$BASE/api/sync" | json 'len(d["episodes"])')"
 [ "$DELTA" -ge 1 ] || fail "state change did not appear in the delta"
 pass "sync cursor is empty when current and picks up changes"
+
+step "sync paging"
+# A truncated sync that did not say so would be silent data loss: the client adopts `now`
+# as its next cursor and the episodes that did not fit are never mentioned again.
+python3 - "$JAR" "$BASE" <<'PY' || exit 1
+import json, subprocess, sys
+jar, base = sys.argv[1], sys.argv[2]
+
+def get(path, params):
+    args = ["curl", "-sS", "-b", jar, "--get", f"{base}{path}"]
+    for key, value in params.items():
+        args += ["--data-urlencode", f"{key}={value}"]
+    return json.loads(subprocess.run(args, capture_output=True, text=True).stdout)
+
+def drain(path, key, page_size):
+    """Page to exhaustion, returning ids in order plus the page count."""
+    ids, pages, cursor = [], 0, None
+    while True:
+        params = {"limit": page_size}
+        if cursor:
+            params["cursor"] = cursor
+        payload = get(path, params)
+        ids += [item["id"] for item in payload[key]]
+        pages += 1
+        cursor = payload.get("next_cursor")
+        if not cursor:
+            return ids, pages
+        if pages > 500:
+            sys.exit(f"  FAIL {path} cursor never terminated after {pages} pages")
+
+# Deliberately a small page size: the point is to force several pages, whatever the size
+# of the library this runs against.
+synced, pages = drain("/api/sync", "episodes", 250)
+listed, _ = drain("/api/episodes", "items", 200)
+
+if len(synced) != len(set(synced)):
+    sys.exit("  FAIL sync repeated episodes across pages")
+if set(synced) != set(listed):
+    missing = len(set(listed) - set(synced))
+    sys.exit(f"  FAIL sync missed {missing} episodes that /api/episodes returns")
+print(f"  ..   {len(synced)} episodes over {pages} sync pages")
+PY
+pass "a paged sync returns every episode exactly once"
+
+[ "$(code "$BASE/api/sync?cursor=nonsense")" = 400 ] || fail "malformed cursor should be rejected"
+pass "malformed cursor rejected"
 
 step "opml"
 api "$BASE/api/opml/export" -o "$TMP/export.opml" >/dev/null
