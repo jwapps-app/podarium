@@ -15,10 +15,19 @@
 #         sudo chown -R 1026:100 /home/jworthington/docker/podarium/{downloads,artwork}
 #     pgdata is left alone -- the Postgres image manages its own ownership.
 #
-#  3. Fill in every CHANGE_ME below. Generate the two random ones with:
-#         openssl rand -hex 32
-#     The Podcast Index key and secret are in your local .env; search only needs them,
-#     and everything else works without.
+#  3. Set the variables in Portainer's "Environment variables" panel, below the editor.
+#     Nothing secret goes in this file, so it stays committable as-is, and DB_PASSWORD is
+#     written once rather than kept in sync in two places by hand.
+#
+#         DB_PASSWORD          openssl rand -hex 32
+#         SECRET_KEY           openssl rand -hex 32
+#         LOGIN_PASSWORD       what you will type to sign in
+#         PODCASTINDEX_KEY     from your local .env -- optional
+#         PODCASTINDEX_SECRET  from your local .env -- optional
+#
+#     The three with :? are required and fail the deploy loudly if unset. Leaving the
+#     Podcast Index pair out is fine: search returns a clean 503 and the UI says so, while
+#     subscribing by feed URL, refresh, downloads, retention and playback all still work.
 #
 #  4. Portainer already has a `ghcr` registry with authentication enabled. This is the
 #     first *private* package it will pull, so if that stored token has expired this is
@@ -49,7 +58,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: podarium
-      POSTGRES_PASSWORD: CHANGE_ME_DB_PASSWORD
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in the environment variables panel}
       POSTGRES_DB: podarium
       # Postgres 18 mounts at /var/lib/pgdata with PGDATA one level deeper. The older
       # /var/lib/postgresql/data path fails on overlay2 hosts -- this bit the PinePods stack.
@@ -76,16 +85,16 @@ services:
     # later is a bind-mount change and nothing else.
     user: "1026:100"
     environment:
-      # Must match POSTGRES_PASSWORD above.
-      DATABASE_URL: postgresql+asyncpg://podarium:CHANGE_ME_DB_PASSWORD@postgres:5432/podarium
+      # Same variable as POSTGRES_PASSWORD above, so the two cannot drift apart -- a
+      # mismatch shows up as the API restarting in a loop while Postgres looks healthy.
+      DATABASE_URL: postgresql+asyncpg://podarium:${DB_PASSWORD}@postgres:5432/podarium
 
       # The externally reachable URL. The server builds absolute links from it, and the
       # session cookie is marked Secure only when this is https -- set that wrongly while
       # serving plain http and logins fail silently, with no error to read.
       PUBLIC_URL: http://192.168.1.30:8044
 
-      # openssl rand -hex 32
-      SECRET_KEY: CHANGE_ME_SECRET_KEY
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment variables panel}
 
       DOWNLOAD_DIR: /downloads
       ARTWORK_DIR: /artwork
@@ -94,13 +103,14 @@ services:
       # afterwards is harmless; they are ignored once the account exists, so a restart
       # cannot reset your password.
       PODARIUM_USERNAME: jworthington
-      PODARIUM_PASSWORD: CHANGE_ME_LOGIN_PASSWORD
+      PODARIUM_PASSWORD: ${LOGIN_PASSWORD:?set LOGIN_PASSWORD in the environment variables panel}
 
       # Free from podcastindex.org; copy from your local .env. Discovery only. Without
       # them /api/search returns a clean 503 and the UI says so; subscribing by feed URL,
       # refresh, downloads, retention and playback all work regardless.
-      PODCASTINDEX_KEY: ""
-      PODCASTINDEX_SECRET: ""
+      # Default to empty rather than required: absent is a supported state.
+      PODCASTINDEX_KEY: ${PODCASTINDEX_KEY:-}
+      PODCASTINDEX_SECRET: ${PODCASTINDEX_SECRET:-}
 
       # Two concurrent downloads. Raise it and a refresh that queues several long episodes
       # will saturate the link.
