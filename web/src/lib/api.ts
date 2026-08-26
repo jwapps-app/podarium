@@ -33,6 +33,11 @@ export class ApiError extends Error {
   get isServiceUnavailable(): boolean {
     return this.status === 503;
   }
+
+  /** Too many failed sign-ins. Distinct from a wrong password, and worth saying so. */
+  get isRateLimited(): boolean {
+    return this.status === 429;
+  }
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

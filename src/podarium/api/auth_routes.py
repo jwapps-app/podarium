@@ -12,6 +12,7 @@ from podarium.auth import (
 from podarium.config import Settings, get_settings
 from podarium.db import get_session
 from podarium.models import ApiToken, User
+from podarium.throttle import record_attempt, seconds_until_unlocked
 from podarium.schemas import (
     LoginRequest,
     TokenCreateRequest,
@@ -30,11 +31,27 @@ async def login(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
+    wait = await seconds_until_unlocked(session, body.username)
+    if wait:
+        # 429 rather than 401, so a client can tell "too many tries" from "wrong password"
+        # and stop retrying. Checked before the password so a locked account cannot be
+        # probed by timing how long the answer takes.
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed sign-ins. Try again in {wait} seconds.",
+            headers={"Retry-After": str(wait)},
+        )
+
     user = (
         await session.execute(select(User).where(User.username == body.username))
     ).scalar_one_or_none()
-    if user is None or not verify_password(user.password_hash, body.password):
+    ok = user is not None and verify_password(user.password_hash, body.password)
+    await record_attempt(session, body.username, succeeded=ok)
+
+    if not ok:
+        # Deliberately identical whether the username exists or the password is wrong.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
     issue_session_cookie(response, user, settings)
     return UserOut(id=user.id, username=user.username, created_at=user.created_at)
 

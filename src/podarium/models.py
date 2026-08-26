@@ -254,6 +254,27 @@ class AppSettings(Base):
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
 
 
+class LoginAttempt(Base):
+    """Every login try, so repeated failures can be throttled.
+
+    Recorded per username rather than per client address. Behind a proxy the address is
+    whatever a header claims, and the only way to trust it is to trust the proxy and
+    validate the chain -- worth doing for a multi-user service, but here there is exactly
+    one account, so throttling it is throttling everything an attacker can try.
+
+    The trade is that someone who can reach the login form can lock the real user out for
+    the window. For a single-user server that is the better failure: a quarter of an hour
+    of annoyance against an unlimited guessing rate.
+    """
+
+    __tablename__ = "login_attempts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    attempted_at: Mapped[datetime] = _now_col(nullable=False, index=True)
+
+
 class DeletedFeed(Base):
     """A tombstone, so a client can learn that a feed is gone.
 

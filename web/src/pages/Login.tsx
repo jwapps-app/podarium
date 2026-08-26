@@ -18,11 +18,23 @@ export function LoginPage() {
     try {
       await login(username, password);
     } catch (cause) {
-      setError(
-        cause instanceof ApiError && cause.isUnauthorized
-          ? "That username and password did not match."
-          : `Could not sign in: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
+      if (cause instanceof ApiError && cause.isRateLimited) {
+        // Its own message, not a wrong-password one: retrying immediately is exactly the
+        // wrong response, and only this case can say so.
+        const seconds = Number(/(\d+) seconds/.exec(cause.message)?.[1] ?? 0);
+        const minutes = Math.ceil(seconds / 60);
+        setError(
+          seconds > 90
+            ? `Too many failed sign-ins. Try again in about ${minutes} minutes.`
+            : "Too many failed sign-ins. Try again in a moment.",
+        );
+      } else if (cause instanceof ApiError && cause.isUnauthorized) {
+        setError("That username and password did not match.");
+      } else {
+        setError(
+          `Could not sign in: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+      }
     } finally {
       setBusy(false);
     }
