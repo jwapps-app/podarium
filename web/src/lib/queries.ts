@@ -12,6 +12,8 @@ function invalidateAll(queryClient: ReturnType<typeof useQueryClient>) {
   queryClient.invalidateQueries({ queryKey: ["queue"] });
   queryClient.invalidateQueries({ queryKey: ["feeds"] });
   queryClient.invalidateQueries({ queryKey: ["feed"] });
+  // Downloading and purging both move bytes; the storage panel reads them.
+  queryClient.invalidateQueries({ queryKey: ["storage"] });
 }
 
 export function useFeeds() {
@@ -35,6 +37,10 @@ export function useQueue() {
 
 export function useSettings() {
   return useQuery({ queryKey: ["settings"], queryFn: api.settings });
+}
+
+export function useStorage() {
+  return useQuery({ queryKey: ["storage"], queryFn: api.storage });
 }
 
 /** Every episode-level action, sharing one invalidation policy. */

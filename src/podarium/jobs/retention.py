@@ -50,7 +50,7 @@ async def purge_episode(session: AsyncSession, episode: Episode, *, reason: str 
     return True
 
 
-async def _protected_episode_ids(session: AsyncSession) -> set[int]:
+async def protected_episode_ids(session: AsyncSession) -> set[int]:
     """Episodes no policy may purge, whatever the dates say.
 
     Two kinds, and both are an explicit instruction rather than an inference. Anything in
@@ -99,7 +99,7 @@ async def sweep(session: AsyncSession) -> int:
     """One retention pass. Returns the number of files purged."""
     app_settings = await get_app_settings(session)
     now = datetime.now(UTC)
-    protected = await _protected_episode_ids(session)
+    protected = await protected_episode_ids(session)
 
     rows = (
         await session.execute(

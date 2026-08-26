@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import { formatBytes, formatRelativeExact } from "../lib/format";
 import { PLAYBACK_RATES } from "../lib/player";
 import { useAuth } from "../lib/auth";
-import { useSettings } from "../lib/queries";
+import { useSettings, useStorage } from "../lib/queries";
 import type { CreatedApiToken, OpmlImportResult, RetentionMode, TotpSetup } from "../lib/types";
 
 export function SettingsPage() {
@@ -26,6 +26,8 @@ export function SettingsPage() {
         </div>
       </header>
 
+      <StoragePanel />
+
       <GlobalSettings
         initial={{
           global_retention_mode: settings.global_retention_mode,
@@ -41,6 +43,89 @@ export function SettingsPage() {
       <TokensPanel />
       <AccountPanel />
     </>
+  );
+}
+
+/** What is on disk, so the ceiling below can be set from measurement rather than a guess.
+ *  Starred and queued episodes are called out separately because they are exempt from both
+ *  retention and the ceiling -- they are the part of the library that grows unbounded. */
+function StoragePanel() {
+  const { data, isLoading, error } = useStorage();
+
+  if (isLoading) return null;
+  if (error) return <ErrorNotice error={error} />;
+  if (!data) return null;
+
+  const { total_bytes, ceiling_bytes, protected_bytes, reclaimable_bytes } = data;
+  // Scaled to the ceiling when one is set, so the bar's empty tail reads as headroom.
+  const scale = Math.max(total_bytes, ceiling_bytes ?? 0) || 1;
+  const pct = (value: number) => `${(value / scale) * 100}%`;
+  // formatBytes elides zero, which reads as a missing number in a legend.
+  const size = (value: number) => formatBytes(value) || "0 B";
+
+  return (
+    <div className="panel">
+      <div className="panel-title">On disk</div>
+      <p className="panel-hint">
+        {total_bytes === 0
+          ? "Nothing downloaded yet."
+          : `${formatBytes(total_bytes)} across ${data.episodes} ${
+              data.episodes === 1 ? "episode" : "episodes"
+            }.`}
+        {ceiling_bytes ? ` Ceiling ${formatBytes(ceiling_bytes)}.` : " No ceiling set."}
+      </p>
+
+      {total_bytes > 0 ? (
+        <>
+          <div
+            className="storage-bar"
+            role="img"
+            aria-label={`${size(protected_bytes)} protected, ${size(reclaimable_bytes)} reclaimable`}
+          >
+            <div className="storage-fill storage-fill-protected" style={{ width: pct(protected_bytes) }} />
+            <div className="storage-fill storage-fill-reclaimable" style={{ width: pct(reclaimable_bytes) }} />
+          </div>
+
+          <div className="storage-legend">
+            <span>
+              <i className="storage-swatch storage-fill-protected" />
+              {size(protected_bytes)} starred or queued
+              {data.protected_episodes > 0 ? ` (${data.protected_episodes})` : ""}
+            </span>
+            <span>
+              <i className="storage-swatch storage-fill-reclaimable" />
+              {size(reclaimable_bytes)} retention can reclaim
+            </span>
+          </div>
+
+          {protected_bytes > 0 ? (
+            <div className="field-hint" style={{ marginTop: 10 }}>
+              Starred and queued episodes are exempt from retention and from the ceiling. A
+              ceiling below {formatBytes(protected_bytes)} could never be met.
+            </div>
+          ) : null}
+
+          <table className="table" style={{ marginTop: 16 }}>
+            <thead>
+              <tr>
+                <th>Show</th>
+                <th className="storage-num">Episodes</th>
+                <th className="storage-num">Size</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.feeds.map((feed) => (
+                <tr key={feed.feed_id}>
+                  <td>{feed.title || <span style={{ color: "var(--text-faint)" }}>untitled</span>}</td>
+                  <td className="storage-num">{feed.episodes}</td>
+                  <td className="storage-num">{formatBytes(feed.bytes)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      ) : null}
+    </div>
   );
 }
 
@@ -175,7 +260,11 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
 
   const save = useMutation({
     mutationFn: (body: Parameters<typeof api.updateSettings>[0]) => api.updateSettings(body),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["settings"] });
+      // The ceiling is reported by the storage panel too.
+      queryClient.invalidateQueries({ queryKey: ["storage"] });
+    },
   });
 
   const submit = (event: React.FormEvent) => {

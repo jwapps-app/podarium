@@ -121,6 +121,25 @@ export interface AppSettings {
   global_auto_download_count: number;
 }
 
+export interface FeedUsage {
+  feed_id: number;
+  title: string | null;
+  bytes: number;
+  episodes: number;
+}
+
+export interface Storage {
+  total_bytes: number;
+  episodes: number;
+  /** Starred or queued: exempt from retention and from the ceiling. */
+  protected_bytes: number;
+  protected_episodes: number;
+  /** What retention could take back if it had to. */
+  reclaimable_bytes: number;
+  ceiling_bytes: number | null;
+  feeds: FeedUsage[];
+}
+
 export interface OpmlImportResult {
   imported: number;
   skipped: number;

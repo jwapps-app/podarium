@@ -263,6 +263,24 @@ api -X POST "$BASE/api/opml/import" -H 'content-type: text/xml' \
   --data-binary @"$TMP/export.opml" | grep -q '"imported":0' || fail "re-import created duplicates"
 pass "OPML round-trips without duplicating subscriptions"
 
+step "storage report"
+# Asserted as identities, not amounts: this run's own downloads and whatever else is on
+# this disk both move the totals, but the parts must always add up to the whole.
+api "$BASE/api/storage" > "$TMP/storage.json"
+python3 - "$TMP/storage.json" <<'STORAGE' || fail "storage report does not add up"
+import json, sys
+
+d = json.load(open(sys.argv[1]))
+assert d["protected_bytes"] + d["reclaimable_bytes"] == d["total_bytes"], d
+assert d["protected_episodes"] <= d["episodes"], d
+assert sum(f["bytes"] for f in d["feeds"]) == d["total_bytes"], d
+assert sum(f["episodes"] for f in d["feeds"]) == d["episodes"], d
+# Sorted largest first: the panel's whole purpose is finding what to trim.
+sizes = [f["bytes"] for f in d["feeds"]]
+assert sizes == sorted(sizes, reverse=True), d
+STORAGE
+pass "storage totals reconcile with the per-feed breakdown"
+
 step "metrics"
 curl -sS "$BASE/metrics" | grep -q '^podarium_' || fail "no podarium metrics exposed"
 pass "Prometheus metrics exposed"

@@ -10,6 +10,7 @@ import type {
   QueueItem,
   RetentionMode,
   SearchResult,
+  Storage,
   TotpSetup,
   User,
 } from "./types";
@@ -226,6 +227,8 @@ export const api = {
 
   // -- settings and admin -----------------------------------------------------
   settings: () => request<AppSettings>("/api/settings"),
+
+  storage: () => request<Storage>("/api/storage"),
 
   updateSettings: (body: Partial<AppSettings> & { clear_download_dir_max_bytes?: boolean }) =>
     request<AppSettings>("/api/settings", { method: "PUT", body: JSON.stringify(body) }),

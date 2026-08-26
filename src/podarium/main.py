@@ -29,6 +29,7 @@ from podarium.api import (
     queue_routes,
     search_routes,
     settings_routes,
+    storage_routes,
     sync_routes,
 )
 from podarium.auth import bootstrap_user
@@ -140,6 +141,7 @@ for module in (
     media_routes,
     sync_routes,
     settings_routes,
+    storage_routes,
     opml_routes,
 ):
     app.include_router(module.router)

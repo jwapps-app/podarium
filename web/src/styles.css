@@ -1111,3 +1111,38 @@ button.player-title:hover { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* Storage usage bar. Scaled to the ceiling when one is set, so the empty tail of the
+   track is headroom rather than dead space. */
+.storage-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.storage-fill-protected { background: var(--accent); }
+.storage-fill-reclaimable { background: var(--border-strong); }
+
+.storage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.storage-legend span { display: flex; align-items: center; gap: 6px; }
+
+.storage-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex: none;
+}
+
+/* A wrapped "743 MB" reads as two numbers. */
+.storage-num { text-align: right; white-space: nowrap; }
