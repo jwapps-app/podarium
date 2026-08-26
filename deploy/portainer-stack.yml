@@ -1,0 +1,74 @@
+# Podarium production stack for docker-audio (192.168.1.30).
+#
+# This file is a DOCUMENT, not a live compose file: paste it into the Portainer web editor.
+# There is deliberately no compose file on disk on the host.
+#
+# Before deploying, confirm the port is free on the host:
+#     ss -tlnp | grep 8044
+# 8040 is PinePods. If 8044 is taken, change both the published port and PUBLIC_URL below.
+#
+# NFS prerequisite: /mnt/nas/podarium must be mounted from 192.168.1.42 via fstab with
+#     noauto,x-systemd.automount,soft,timeo=100
+# Do NOT add RequiresMountsFor= to the docker.service drop-in. Combined with noauto it
+# blocks Docker from ever starting.
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: podarium-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: podarium
+      POSTGRES_PASSWORD: CHANGE_ME_BEFORE_DEPLOY
+      POSTGRES_DB: podarium
+      # Postgres 18 mounts at /var/lib/pgdata with PGDATA one level deeper. The old
+      # /var/lib/postgresql/data path fails on overlay2 hosts -- this bit the PinePods stack.
+      PGDATA: /var/lib/pgdata/pgdata
+    volumes:
+      # Small and valuable: local NVMe, so it is covered by vzdump/PBS.
+      - /home/jworthington/docker/podarium/pgdata:/var/lib/pgdata
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U podarium"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ghcr.io/jwapps-app/podarium-api:latest
+    container_name: podarium-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Matches ownership on the NFS share.
+    user: "1026:100"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://podarium:CHANGE_ME_BEFORE_DEPLOY@postgres:5432/podarium
+
+      # Must be the externally reachable URL; the server builds absolute links from it,
+      # and the session cookie is marked Secure only when this is https.
+      PUBLIC_URL: http://192.168.1.30:8044
+
+      # Sign sessions with a long random value: openssl rand -hex 32
+      SECRET_KEY: CHANGE_ME_BEFORE_DEPLOY
+
+      DOWNLOAD_DIR: /downloads
+      ARTWORK_DIR: /artwork
+
+      # Applied only on first boot, while the users table is empty. Leaving them here after
+      # that is harmless -- they are ignored once the account exists.
+      PODARIUM_USERNAME: jworthington
+      PODARIUM_PASSWORD: CHANGE_ME_BEFORE_DEPLOY
+
+      # Free key from podcastindex.org. Discovery only; search returns 503 without them
+      # and every other feature keeps working.
+      PODCASTINDEX_KEY: ""
+      PODCASTINDEX_SECRET: ""
+
+      DOWNLOAD_CONCURRENCY: "2"
+    volumes:
+      # Large, churny, and worth nothing on restore: NAS only. Never a VM disk, never PBS.
+      - /mnt/nas/podarium/downloads:/downloads
+      - /mnt/nas/podarium/artwork:/artwork
+    ports:
+      - "8044:8044"
