@@ -5,8 +5,12 @@ art at any time, and the same URL then has to start returning a different image.
 for a day would leave the wrong artwork on screen with no way to correct it.
 """
 
+from datetime import UTC, datetime
+
 import httpx
 import pytest
+import respx
+from sqlalchemy import select
 
 from podarium.auth import current_user
 from podarium.config import get_settings
@@ -100,3 +104,74 @@ async def test_changed_artwork_produces_a_new_etag(session, client):
     )
     assert revalidated.status_code == 200
     assert revalidated.content == b"\xff\xd8\xff\xe0different"
+
+
+# --- failed fetches ------------------------------------------------------------
+#
+# Some feeds carry artwork URLs that simply do not work. One in this library points at a
+# bare directory and answers 403 every time, and without a pause every library page load
+# fired another request at a host already refusing us.
+
+
+@respx.mock
+async def test_a_failed_fetch_is_not_retried_immediately(session):
+    from podarium.jobs.artwork import ensure_artwork
+
+    broken = "https://feeds.example.com/~images/"
+    route = respx.get(broken).mock(return_value=httpx.Response(403))
+
+    await ensure_artwork(session, broken, user_agent="test")
+    await ensure_artwork(session, broken, user_agent="test")
+    await ensure_artwork(session, broken, user_agent="test")
+
+    assert route.call_count == 1, "one attempt, not one per page load"
+
+
+@respx.mock
+async def test_it_is_retried_once_the_pause_is_over(session):
+    from datetime import timedelta
+
+    from podarium.jobs.artwork import RETRY_FAILED_AFTER, ensure_artwork, url_hash
+
+    broken = "https://feeds.example.com/~images/"
+    route = respx.get(broken).mock(return_value=httpx.Response(403))
+    await ensure_artwork(session, broken, user_agent="test")
+
+    entry = (
+        await session.execute(
+            select(ArtworkCache).where(ArtworkCache.url_hash == url_hash(broken))
+        )
+    ).scalar_one()
+    entry.fetched_at = datetime.now(UTC) - RETRY_FAILED_AFTER - timedelta(minutes=1)
+    await session.commit()
+
+    await ensure_artwork(session, broken, user_agent="test")
+
+    assert route.call_count == 2, "publishers do fix these"
+
+
+@respx.mock
+async def test_a_recovered_image_is_stored(session):
+    """The point of retrying at all."""
+    from datetime import timedelta
+
+    from podarium.jobs.artwork import RETRY_FAILED_AFTER, ensure_artwork, url_hash
+
+    url = "https://feeds.example.com/art.jpg"
+    route = respx.get(url)
+    route.side_effect = [httpx.Response(403), httpx.Response(200, content=IMAGE)]
+
+    await ensure_artwork(session, url, user_agent="test")
+    entry = (
+        await session.execute(
+            select(ArtworkCache).where(ArtworkCache.url_hash == url_hash(url))
+        )
+    ).scalar_one()
+    assert entry.local_path is None
+    entry.fetched_at = datetime.now(UTC) - RETRY_FAILED_AFTER - timedelta(minutes=1)
+    await session.commit()
+
+    recovered = await ensure_artwork(session, url, user_agent="test")
+
+    assert recovered.local_path is not None
+    assert recovered.fetch_error is None

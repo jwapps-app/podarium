@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -31,6 +31,15 @@ _EXTENSIONS = {
 }
 
 MAX_ARTWORK_BYTES = 12 * 1024 * 1024
+
+# How long to leave a failed image alone before trying it again.
+#
+# Some feeds carry artwork URLs that simply do not work -- one here points at a bare
+# directory and answers 403 every time. Without a pause, every library page load fires
+# another request at a host already refusing us, which is wasted traffic at best and a way
+# to get an address blocked at worst. Publishers do fix these, so it retries, just not
+# dozens of times an hour.
+RETRY_FAILED_AFTER = timedelta(hours=6)
 
 # One in-flight fetch per URL hash. Two episodes sharing a feed image on a cold cache
 # would otherwise both download it.
@@ -61,6 +70,13 @@ async def ensure_artwork(session: AsyncSession, source_url: str, *, user_agent: 
         if entry is not None and entry.local_path and Path(entry.local_path).exists():
             return entry
 
+        if entry is not None and entry.fetch_error and entry.fetched_at is not None:
+            last_try = entry.fetched_at
+            if last_try.tzinfo is None:
+                last_try = last_try.replace(tzinfo=UTC)
+            if datetime.now(UTC) - last_try < RETRY_FAILED_AFTER:
+                return entry
+
         if entry is None:
             entry = ArtworkCache(url_hash=digest, source_url=source_url)
             session.add(entry)
@@ -86,6 +102,9 @@ async def ensure_artwork(session: AsyncSession, source_url: str, *, user_agent: 
             entry.fetch_error = None
         except Exception as exc:  # noqa: BLE001 - a missing image must not fail a refresh
             entry.fetch_error = f"{type(exc).__name__}: {exc}"[:500]
+            # Stamped on failure too, so this records the last *attempt* rather than the
+            # last success -- which is what the backoff above needs to read.
+            entry.fetched_at = datetime.now(UTC)
             log.info("artwork fetch failed for %s: %s", source_url, entry.fetch_error)
 
         await session.commit()
