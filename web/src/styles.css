@@ -1062,7 +1062,14 @@ button.player-title:hover { color: var(--accent); }
 
   /* Five action buttons beside the text leave a phone about 130px for the title, which
      truncates it to nothing. Drop the actions onto their own row underneath so the title
-     gets the full width. */
+     gets the full width.
+
+     That split needs the episode to read as one object, or the buttons look like they
+     belong to the row below them. So each one rests as its own quiet card -- the same
+     shape selection already draws, held at low contrast -- and the gap between cards is
+     the only boundary on screen. */
+  .episode-list { gap: 8px; }
+
   .episode {
     display: grid;
     grid-template-columns: 44px 1fr;
@@ -1071,6 +1078,8 @@ button.player-title:hover { color: var(--accent); }
       "actions actions";
     gap: 10px;
     padding: 12px 10px;
+    background: var(--bg-raised);
+    border-color: var(--border);
   }
 
   .episode-art { grid-area: art; width: 44px; height: 44px; }
@@ -1089,9 +1098,7 @@ button.player-title:hover { color: var(--accent); }
     grid-area: actions;
     justify-content: flex-end;
     gap: 4px;
-    border-top: 1px solid var(--border);
-    margin-top: 2px;
-    padding-top: 8px;
+    margin-top: 4px;
   }
 
   /* Comfortable tap targets, now that there is room for them. */
@@ -1100,9 +1107,7 @@ button.player-title:hover { color: var(--accent); }
   .queue-item { flex-wrap: wrap; }
 
   .queue-item .episode-actions {
-    border-top: none;
     margin-top: 0;
-    padding-top: 0;
     width: 100%;
     justify-content: flex-end;
   }
