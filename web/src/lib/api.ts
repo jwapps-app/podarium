@@ -53,7 +53,27 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   const text = await response.text();
-  const payload = text ? JSON.parse(text) : undefined;
+
+  let payload: { error?: { code?: string; message?: string } } | undefined;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      // Not JSON, so something other than Podarium answered -- a proxy error page, a
+      // captive portal, a challenge. Parsing it produced a raw
+      // "Unexpected token '<'" that named neither the request nor the status, which is
+      // the least useful thing to show for a failure that is usually not even ours.
+      throw new ApiError(
+        response.status,
+        `non_json_${response.status}`,
+        `${path} returned ${response.status} ${response.statusText || ""}`.trim() +
+          ` with ${describeBody(text)} instead of JSON.` +
+          (response.ok
+            ? " Something between the browser and Podarium answered instead of the API."
+            : ""),
+      );
+    }
+  }
 
   if (!response.ok) {
     const error = payload?.error;
@@ -65,6 +85,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   return payload as T;
+}
+
+/** A short human description of an unexpected body, for the error message. */
+function describeBody(text: string): string {
+  const head = text.trimStart().slice(0, 200).toLowerCase();
+  if (head.startsWith("<!doctype html") || head.startsWith("<html")) return "an HTML page";
+  if (head.startsWith("<")) return "an XML or HTML document";
+  return `${text.length} bytes of non-JSON`;
 }
 
 function query(params: Record<string, string | number | boolean | undefined>): string {
