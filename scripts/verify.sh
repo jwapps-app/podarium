@@ -170,8 +170,26 @@ AFTER="$(api "$BASE/api/episodes/$EP_ID")"
 pass "file purged, row and GUID intact"
 
 api -X POST "$BASE/api/feeds/$FEED_ID/refresh" >/dev/null
-COUNT_3="$(api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" | json 'len(d["items"])')"
-[ "$COUNT_3" = "$COUNT_1" ] || fail "refresh resurrected the purged episode"
+api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" > "$TMP/after-purge.json"
+
+# Assert what the invariant actually claims about *this* episode, rather than that the
+# feed's total is unchanged. The default feed is an hourly news bulletin, so a new episode
+# can land mid-run -- that is the feed working, and it failed this check for it.
+python3 - "$TMP/after-purge.json" "$EP_ID" "$GUID" <<'PY' || exit 1
+import json, sys
+items = json.load(open(sys.argv[1]))["items"]
+episode_id, guid = int(sys.argv[2]), sys.argv[3]
+
+matching = [e for e in items if e["guid"] == guid]
+if len(matching) != 1:
+    sys.exit(f"  FAIL the purged GUID appears {len(matching)} times; it was re-added")
+if matching[0]["id"] != episode_id:
+    sys.exit("  FAIL the purged episode came back under a new id")
+if matching[0]["downloaded"]:
+    sys.exit("  FAIL the purged episode was downloaded again")
+if not matching[0]["purged_at"]:
+    sys.exit("  FAIL purged_at was cleared by the refresh")
+PY
 pass "refresh after purge did not re-add the episode"
 
 step "delta sync"
