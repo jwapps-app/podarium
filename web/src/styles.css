@@ -1012,7 +1012,20 @@ button.player-title:hover { color: var(--accent); }
 
 @media (max-width: 560px) {
   .player-center .player-buttons { display: none; }
-  .feed-grid { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 14px; }
+  /* Fixed three across rather than auto-fill. A minimum tile width fits only two on a
+     narrow phone, which wastes the row and makes a library of any size a long scroll.
+     The gap tightens so three tiles still get a usable share of the width. */
+  /* minmax(0, 1fr), not 1fr: a bare 1fr keeps an implicit auto minimum, so a track cannot
+     shrink below its content and one unbreakable string -- an author line like
+     "NPR (podcasts@npr.org)" -- widens its column and knocks the row out of alignment.
+     A zero minimum lets every column take an equal share and the author line ellipsise. */
+  .feed-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+
+  /* Smaller tiles need smaller type, or a two-line title clamps to nothing readable. */
+  .feed-card-title { font-size: 12.5px; line-height: 1.3; margin-top: 7px; }
+  .feed-card-author { font-size: 11px; }
+
+  .badge { min-width: 18px; padding: 1px 5px; font-size: 10px; top: 5px; right: 5px; }
 
   /* Five action buttons beside the text leave a phone about 130px for the title, which
      truncates it to nothing. Drop the actions onto their own row underneath so the title
