@@ -21,6 +21,13 @@ async def get_app_settings(session: AsyncSession) -> AppSettings:
     return settings_row
 
 
+def effective_auto_download_count(feed: Feed, app_settings: AppSettings) -> int:
+    """A NULL on the feed inherits the global; a value on the feed overrides it."""
+    if feed.auto_download_count is not None:
+        return feed.auto_download_count
+    return app_settings.global_auto_download_count
+
+
 def effective_retention(feed: Feed, app_settings: AppSettings) -> tuple[RetentionMode, int]:
     """A NULL on the feed inherits the global; a value on the feed overrides it."""
     mode = feed.retention_mode if feed.retention_mode is not None else app_settings.global_retention_mode

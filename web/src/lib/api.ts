@@ -121,6 +121,7 @@ export const api = {
       active?: boolean;
       clear_retention_mode?: boolean;
       clear_retention_days?: boolean;
+      clear_auto_download_count?: boolean;
     },
   ) => request<Feed>(`/api/feeds/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
 

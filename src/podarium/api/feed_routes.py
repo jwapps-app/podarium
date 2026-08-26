@@ -40,6 +40,17 @@ async def _counts(session: AsyncSession, user_id: int, feed_ids: list[int]) -> d
     return {feed_id: (total, unplayed) for feed_id, total, unplayed in rows}
 
 
+async def _feed_out(session: AsyncSession, feed: Feed, user_id: int) -> FeedOut:
+    app_settings = await get_app_settings(session)
+    total, unplayed = (await _counts(session, user_id, [feed.id])).get(feed.id, (0, 0))
+    return feed_out(
+        feed,
+        episode_count=total,
+        unplayed_count=unplayed,
+        global_auto_download_count=app_settings.global_auto_download_count,
+    )
+
+
 @router.get("", response_model=list[FeedOut])
 async def list_feeds(
     active: bool | None = Query(default=None),
@@ -51,8 +62,14 @@ async def list_feeds(
         statement = statement.where(Feed.active.is_(active))
     feeds = (await session.execute(statement)).scalars().all()
     counts = await _counts(session, user.id, [f.id for f in feeds])
+    app_settings = await get_app_settings(session)
     return [
-        feed_out(f, episode_count=counts.get(f.id, (0, 0))[0], unplayed_count=counts.get(f.id, (0, 0))[1])
+        feed_out(
+            f,
+            episode_count=counts.get(f.id, (0, 0))[0],
+            unplayed_count=counts.get(f.id, (0, 0))[1],
+            global_auto_download_count=app_settings.global_auto_download_count,
+        )
         for f in feeds
     ]
 
@@ -93,9 +110,7 @@ async def create_feed(
     )
     if not created:
         response.status_code = status.HTTP_200_OK
-    counts = await _counts(session, user.id, [feed.id])
-    total, unplayed = counts.get(feed.id, (0, 0))
-    return feed_out(feed, episode_count=total, unplayed_count=unplayed)
+    return await _feed_out(session, feed, user.id)
 
 
 async def _get_feed_or_404(session: AsyncSession, feed_id: int) -> Feed:
@@ -112,8 +127,7 @@ async def get_feed(
     session: AsyncSession = Depends(get_session),
 ) -> FeedOut:
     feed = await _get_feed_or_404(session, feed_id)
-    total, unplayed = (await _counts(session, user.id, [feed.id])).get(feed.id, (0, 0))
-    return feed_out(feed, episode_count=total, unplayed_count=unplayed)
+    return await _feed_out(session, feed, user.id)
 
 
 @router.patch("/{feed_id}", response_model=FeedOut)
@@ -125,8 +139,12 @@ async def update_feed(
 ) -> FeedOut:
     feed = await _get_feed_or_404(session, feed_id)
 
-    if body.auto_download_count is not None:
+    # NULL means "inherit the global" here too, so clearing needs its own flag.
+    if body.clear_auto_download_count:
+        feed.auto_download_count = None
+    elif body.auto_download_count is not None:
         feed.auto_download_count = body.auto_download_count
+
     if body.active is not None:
         feed.active = body.active
 
@@ -148,13 +166,15 @@ async def update_feed(
     # during a refresh, so a feed that was just fetched would sit there for up to a full
     # refresh interval with the setting saved and nothing on disk -- indistinguishable,
     # from the outside, from the setting not working.
-    if body.auto_download_count is not None and feed.auto_download_count > 0:
+    touched_auto_download = (
+        body.auto_download_count is not None or body.clear_auto_download_count
+    )
+    if touched_auto_download:
         await enqueue_auto_downloads(session, feed)
         await session.commit()
 
     await session.refresh(feed)
-    total, unplayed = (await _counts(session, user.id, [feed.id])).get(feed.id, (0, 0))
-    return feed_out(feed, episode_count=total, unplayed_count=unplayed)
+    return await _feed_out(session, feed, user.id)
 
 
 @router.delete("/{feed_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -197,5 +217,4 @@ async def force_refresh(
     feed.fetch_error_count = 0
     await refresh_feed(session, feed, user_agent=app_settings.user_agent)
     await session.refresh(feed)
-    total, unplayed = (await _counts(session, user.id, [feed.id])).get(feed.id, (0, 0))
-    return feed_out(feed, episode_count=total, unplayed_count=unplayed)
+    return await _feed_out(session, feed, user.id)

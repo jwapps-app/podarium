@@ -72,10 +72,11 @@ class FeedUpdateRequest(BaseModel):
     retention_mode: RetentionMode | None = None
     retention_days: int | None = Field(default=None, ge=0)
     active: bool | None = None
-    # NULL is meaningful on the retention columns (it means "inherit the global"), so an
-    # explicit clear needs its own flag rather than being confused with "field omitted".
+    # NULL is meaningful on these columns (it means "inherit the global"), so an explicit
+    # clear needs its own flag rather than being confused with "field omitted".
     clear_retention_mode: bool = False
     clear_retention_days: bool = False
+    clear_auto_download_count: bool = False
 
 
 class FeedOut(BaseModel):
@@ -89,7 +90,10 @@ class FeedOut(BaseModel):
     language: str | None
     explicit: bool
     image_url: str | None
-    auto_download_count: int
+    # None means the feed inherits the global; effective_auto_download_count is what is
+    # actually applied, so a client never has to fetch settings to display it.
+    auto_download_count: int | None
+    effective_auto_download_count: int
     retention_mode: RetentionMode | None
     retention_days: int | None
     active: bool
@@ -163,6 +167,7 @@ class SettingsOut(BaseModel):
     refresh_interval_minutes: int
     user_agent: str
     default_playback_rate: float
+    global_auto_download_count: int
 
 
 class SettingsUpdate(BaseModel):
@@ -171,6 +176,7 @@ class SettingsUpdate(BaseModel):
     download_dir_max_bytes: int | None = Field(default=None, ge=0)
     clear_download_dir_max_bytes: bool = False
     refresh_interval_minutes: int | None = Field(default=None, ge=1)
+    global_auto_download_count: int | None = Field(default=None, ge=0)
     user_agent: str | None = None
     # Bounded to what browsers and AVPlayer actually honour; outside this range playback
     # is either unintelligible or silently clamped by the platform.
@@ -208,7 +214,13 @@ def episode_image_url(episode: Episode) -> str | None:
     return f"/api/images/feed/{episode.feed_id}"
 
 
-def feed_out(feed: Feed, *, episode_count: int | None = None, unplayed_count: int | None = None) -> FeedOut:
+def feed_out(
+    feed: Feed,
+    *,
+    episode_count: int | None = None,
+    unplayed_count: int | None = None,
+    global_auto_download_count: int = 0,
+) -> FeedOut:
     return FeedOut(
         id=feed.id,
         feed_url=feed.feed_url,
@@ -221,6 +233,11 @@ def feed_out(feed: Feed, *, episode_count: int | None = None, unplayed_count: in
         explicit=feed.explicit,
         image_url=feed_image_url(feed),
         auto_download_count=feed.auto_download_count,
+        effective_auto_download_count=(
+            feed.auto_download_count
+            if feed.auto_download_count is not None
+            else global_auto_download_count
+        ),
         retention_mode=feed.retention_mode,
         retention_days=feed.retention_days,
         active=feed.active,

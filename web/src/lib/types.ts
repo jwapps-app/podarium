@@ -33,7 +33,10 @@ export interface Feed {
   explicit: boolean;
   /** Always an /api/images path, never a publisher CDN. */
   image_url: string | null;
-  auto_download_count: number;
+  /** null means the feed inherits the global default. */
+  auto_download_count: number | null;
+  /** What is actually applied, resolved server-side. */
+  effective_auto_download_count: number;
   retention_mode: RetentionMode | null;
   retention_days: number | null;
   active: boolean;
@@ -106,6 +109,8 @@ export interface AppSettings {
   user_agent: string;
   /** Starting speed for every episode. Server-side so iOS starts where the web player does. */
   default_playback_rate: number;
+  /** Default number of newest episodes to pre-download, for feeds that do not override it. */
+  global_auto_download_count: number;
 }
 
 export interface OpmlImportResult {

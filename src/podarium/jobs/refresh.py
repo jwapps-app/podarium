@@ -27,7 +27,11 @@ from podarium.db import get_sessionmaker
 from podarium.jobs.artwork import ensure_feed_artwork
 from podarium.metrics import episodes_discovered_total, feed_refresh_total
 from podarium.models import Episode, Feed, JobSource
-from podarium.services import enqueue_download, get_app_settings
+from podarium.services import (
+    effective_auto_download_count,
+    enqueue_download,
+    get_app_settings,
+)
 
 log = logging.getLogger(__name__)
 
@@ -78,10 +82,14 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
 async def enqueue_auto_downloads(session: AsyncSession, feed: Feed) -> None:
     """Pre-download the N newest episodes for a feed that opted in.
 
+    N is the feed's own setting, or the global default when the feed inherits.
+
     ``purged_at IS NULL`` matters: without it, retention deleting a recent episode would
     be immediately undone by the next refresh re-enqueueing it.
     """
-    if feed.auto_download_count <= 0:
+    app_settings = await get_app_settings(session)
+    count = effective_auto_download_count(feed, app_settings)
+    if count <= 0:
         return
     candidates = (
         await session.execute(
@@ -91,7 +99,7 @@ async def enqueue_auto_downloads(session: AsyncSession, feed: Feed) -> None:
             .where(Episode.purged_at.is_(None))
             .where(Episode.enclosure_url.is_not(None))
             .order_by(Episode.published_at.desc().nullslast(), Episode.id.desc())
-            .limit(feed.auto_download_count)
+            .limit(count)
         )
     ).scalars().all()
     for episode in candidates:

@@ -118,8 +118,10 @@ class Feed(Base):
     fetch_error: Mapped[str | None] = mapped_column(Text)
     fetch_error_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    # 0 means queue-only: audio is fetched when an episode is queued or explicitly requested.
-    auto_download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # NULL inherits the global; a value here overrides it. 0 means queue-only: audio is
+    # fetched when an episode is queued or explicitly requested. Same shape as retention
+    # below, so "inherit" is expressible rather than being confused with "zero".
+    auto_download_count: Mapped[int | None] = mapped_column(Integer)
 
     # NULL on either column inherits the corresponding global setting.
     retention_mode: Mapped[RetentionMode | None] = mapped_column(_enum(RetentionMode, "retention_mode"))
@@ -221,6 +223,7 @@ class AppSettings(Base):
         _enum(RetentionMode, "retention_mode"), nullable=False, default=RetentionMode.after_played
     )
     global_retention_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    global_auto_download_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     download_dir_max_bytes: Mapped[int | None] = mapped_column(BigInteger)
     refresh_interval_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     user_agent: Mapped[str] = mapped_column(Text, nullable=False, default="Podarium/0.1.0")

@@ -63,8 +63,9 @@ export function FeedDetailPage() {
             {feed.unplayed_count ? ` · ${feed.unplayed_count} unplayed` : null}
             {" · "}
             refreshed {formatRelativeExact(feed.last_fetched_at)}
-            {feed.auto_download_count > 0
-              ? ` · auto-downloading ${feed.auto_download_count} newest`
+            {feed.effective_auto_download_count > 0
+              ? ` · auto-downloading ${feed.effective_auto_download_count} newest` +
+                (feed.auto_download_count === null ? " (global)" : "")
               : null}
           </div>
 
@@ -103,6 +104,7 @@ export function FeedDetailPage() {
           feed={feed}
           globalMode={globals?.global_retention_mode}
           globalDays={globals?.global_retention_days}
+          globalAutoDownload={globals?.global_auto_download_count}
           onSave={(body) => actions.update.mutate({ id: feed.id, ...body })}
           saving={actions.update.isPending}
         />
@@ -145,13 +147,14 @@ export function FeedDetailPage() {
 
 interface SettingsProps {
   feed: {
-    auto_download_count: number;
+    auto_download_count: number | null;
     retention_mode: RetentionMode | null;
     retention_days: number | null;
     active: boolean;
   };
   globalMode: RetentionMode | undefined;
   globalDays: number | undefined;
+  globalAutoDownload: number | undefined;
   saving: boolean;
   onSave: (body: {
     auto_download_count?: number;
@@ -160,6 +163,7 @@ interface SettingsProps {
     active?: boolean;
     clear_retention_mode?: boolean;
     clear_retention_days?: boolean;
+    clear_auto_download_count?: boolean;
   }) => void;
 }
 
@@ -169,8 +173,18 @@ const MODE_LABELS: Record<RetentionMode, string> = {
   never: "Keep forever",
 };
 
-function FeedSettings({ feed, globalMode, globalDays, saving, onSave }: SettingsProps) {
-  const [autoDownload, setAutoDownload] = useState(String(feed.auto_download_count));
+function FeedSettings({
+  feed,
+  globalMode,
+  globalDays,
+  globalAutoDownload,
+  saving,
+  onSave,
+}: SettingsProps) {
+  // "" is inherit, which is distinct from an explicit 0.
+  const [autoDownload, setAutoDownload] = useState(
+    feed.auto_download_count === null ? "" : String(feed.auto_download_count),
+  );
   // "" is not the same as 0 here: it means inherit the global, which is a real state.
   const [mode, setMode] = useState<RetentionMode | "">(feed.retention_mode ?? "");
   const [days, setDays] = useState(feed.retention_days === null ? "" : String(feed.retention_days));
@@ -179,7 +193,9 @@ function FeedSettings({ feed, globalMode, globalDays, saving, onSave }: Settings
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
     onSave({
-      auto_download_count: Math.max(0, Number(autoDownload) || 0),
+      ...(autoDownload === ""
+        ? { clear_auto_download_count: true }
+        : { auto_download_count: Math.max(0, Number(autoDownload) || 0) }),
       active,
       ...(mode === "" ? { clear_retention_mode: true } : { retention_mode: mode }),
       ...(days === "" ? { clear_retention_days: true } : { retention_days: Number(days) }),
@@ -190,7 +206,7 @@ function FeedSettings({ feed, globalMode, globalDays, saving, onSave }: Settings
     <form className="panel" onSubmit={submit}>
       <div className="panel-title">Show settings</div>
       <p className="panel-hint">
-        Retention left blank inherits the global setting
+        Anything left blank inherits the global setting
         {globalMode ? ` (${MODE_LABELS[globalMode].toLowerCase()}, ${globalDays} days)` : ""}.
       </p>
 
@@ -201,12 +217,18 @@ function FeedSettings({ feed, globalMode, globalDays, saving, onSave }: Settings
             id="auto"
             type="number"
             min={0}
+            placeholder={
+              globalAutoDownload === undefined
+                ? "Inherit global"
+                : `Inherit global (${globalAutoDownload})`
+            }
             value={autoDownload}
             onChange={(event) => setAutoDownload(event.target.value)}
           />
           <div className="field-hint">
-            0 downloads nothing until you queue an episode. Any higher number keeps that
-            many recent episodes on disk ahead of time.
+            Blank follows the global default. 0 downloads nothing until you queue an
+            episode; any higher number keeps that many recent episodes on disk ahead of
+            time.
           </div>
         </div>
 

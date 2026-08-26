@@ -119,3 +119,99 @@ async def test_purged_episodes_are_not_resurrected(session, client):
 
     queued = {job.episode_id for job in await _jobs(session)}
     assert episode.id not in queued
+
+
+# --- global default -----------------------------------------------------------
+#
+# Same shape as retention: NULL on the feed inherits the global, a value overrides it.
+# That distinction is why the column had to become nullable -- an explicit 0 ("never
+# pre-download this show") and "follow the global" are different intentions, and before
+# this they were the same value.
+
+
+async def _set_global(client, count: int):
+    response = await client.put("/api/settings", json={"global_auto_download_count": count})
+    assert response.status_code == 200
+    return response.json()
+
+
+async def test_a_feed_with_no_override_follows_the_global(session, client):
+    feed = await session.get(Feed, client.feed_id)
+    feed.auto_download_count = None
+    await session.commit()
+
+    await _set_global(client, 2)
+
+    jobs = await _jobs(session)
+    assert len(jobs) == 2, "raising the global must reach inheriting feeds immediately"
+
+
+async def test_an_explicit_zero_is_not_the_same_as_inheriting(session, client):
+    """The distinction the nullable column exists for."""
+    feed = await session.get(Feed, client.feed_id)
+    feed.auto_download_count = 0
+    await session.commit()
+
+    await _set_global(client, 3)
+
+    assert await _jobs(session) == [], "an explicit 0 must override the global, not follow it"
+
+
+async def test_a_feed_override_beats_the_global(session, client):
+    await _set_global(client, 5)
+    await client.patch(f"/api/feeds/{client.feed_id}", json={"auto_download_count": 1})
+
+    jobs = await _jobs(session)
+    assert len(jobs) == 1
+
+
+async def test_clearing_the_override_returns_the_feed_to_the_global(session, client):
+    await client.patch(f"/api/feeds/{client.feed_id}", json={"auto_download_count": 1})
+    assert len(await _jobs(session)) == 1
+
+    await _set_global(client, 3)
+    response = await client.patch(
+        f"/api/feeds/{client.feed_id}", json={"clear_auto_download_count": True}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auto_download_count"] is None
+    assert body["effective_auto_download_count"] == 3
+    assert len(await _jobs(session)) == 3
+
+
+async def test_the_feed_reports_what_is_actually_applied(session, client):
+    """A client should not have to fetch settings to show the effective value."""
+    feed = await session.get(Feed, client.feed_id)
+    feed.auto_download_count = None
+    await session.commit()
+    await _set_global(client, 4)
+
+    body = (await client.get(f"/api/feeds/{client.feed_id}")).json()
+    assert body["auto_download_count"] is None
+    assert body["effective_auto_download_count"] == 4
+
+
+async def test_lowering_the_global_does_not_delete_anything(session, client):
+    """Retention decides what leaves the disk, not this setting."""
+    feed = await session.get(Feed, client.feed_id)
+    feed.auto_download_count = None
+    await session.commit()
+    await _set_global(client, 3)
+    assert len(await _jobs(session)) == 3
+
+    await _set_global(client, 1)
+
+    assert len(await _jobs(session)) == 3, "already-queued downloads must not be cancelled"
+
+
+async def test_an_inactive_feed_is_left_alone(session, client):
+    feed = await session.get(Feed, client.feed_id)
+    feed.auto_download_count = None
+    feed.active = False
+    await session.commit()
+
+    await _set_global(client, 3)
+
+    assert await _jobs(session) == [], "an unsubscribed feed must not start downloading"

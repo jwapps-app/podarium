@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.auth import current_user
 from podarium.db import get_session
-from podarium.models import User
+from podarium.jobs.refresh import enqueue_auto_downloads
+from podarium.models import Feed, User
 from podarium.schemas import SettingsOut, SettingsUpdate
 from podarium.services import get_app_settings
 
@@ -18,6 +20,7 @@ def _out(row) -> SettingsOut:
         refresh_interval_minutes=row.refresh_interval_minutes,
         user_agent=row.user_agent,
         default_playback_rate=row.default_playback_rate,
+        global_auto_download_count=row.global_auto_download_count,
     )
 
 
@@ -42,6 +45,8 @@ async def update_settings(
         row.global_retention_days = body.global_retention_days
     if body.refresh_interval_minutes is not None:
         row.refresh_interval_minutes = body.refresh_interval_minutes
+    if body.global_auto_download_count is not None:
+        row.global_auto_download_count = body.global_auto_download_count
     if body.user_agent:
         row.user_agent = body.user_agent
     if body.default_playback_rate is not None:
@@ -54,5 +59,21 @@ async def update_settings(
         row.download_dir_max_bytes = body.download_dir_max_bytes
 
     await session.commit()
+
+    # Same reasoning as the per-feed setting: raising the global has to do something now.
+    # Otherwise every inheriting feed sits with the value saved and nothing on disk until
+    # its next scheduled refresh, which looks exactly like the setting not working.
+    if body.global_auto_download_count is not None and row.global_auto_download_count > 0:
+        inheriting = (
+            await session.execute(
+                select(Feed)
+                .where(Feed.auto_download_count.is_(None))
+                .where(Feed.active.is_(True))
+            )
+        ).scalars().all()
+        for feed in inheriting:
+            await enqueue_auto_downloads(session, feed)
+        await session.commit()
+
     await session.refresh(row)
     return _out(row)

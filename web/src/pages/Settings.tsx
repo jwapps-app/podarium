@@ -33,6 +33,7 @@ export function SettingsPage() {
           refresh_interval_minutes: settings.refresh_interval_minutes,
           user_agent: settings.user_agent,
           default_playback_rate: settings.default_playback_rate,
+          global_auto_download_count: settings.global_auto_download_count,
         }}
       />
       <OpmlPanel />
@@ -48,6 +49,7 @@ interface GlobalValues {
   refresh_interval_minutes: number;
   user_agent: string;
   default_playback_rate: number;
+  global_auto_download_count: number;
 }
 
 function GlobalSettings({ initial }: { initial: GlobalValues }) {
@@ -57,6 +59,7 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
   const [interval, setInterval] = useState(String(initial.refresh_interval_minutes));
   const [userAgent, setUserAgent] = useState(initial.user_agent);
   const [rate, setRate] = useState(String(initial.default_playback_rate));
+  const [autoDownload, setAutoDownload] = useState(String(initial.global_auto_download_count));
   // Exposed in GB because a byte ceiling is unreadable at NAS scale.
   const [ceilingGb, setCeilingGb] = useState(
     initial.download_dir_max_bytes === null
@@ -78,6 +81,7 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
       refresh_interval_minutes: Math.max(1, Number(interval) || 60),
       user_agent: userAgent.trim() || initial.user_agent,
       default_playback_rate: Number(rate) || 1,
+      global_auto_download_count: Math.max(0, Number(autoDownload) || 0),
       ...(trimmed === ""
         ? { clear_download_dir_max_bytes: true }
         : { download_dir_max_bytes: Math.round(Number(trimmed) * 1024 ** 3) }),
@@ -125,6 +129,22 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
             value={interval}
             onChange={(event) => setInterval(event.target.value)}
           />
+        </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="global-auto">Auto-download newest</label>
+        <input
+          id="global-auto"
+          type="number"
+          min={0}
+          value={autoDownload}
+          onChange={(event) => setAutoDownload(event.target.value)}
+        />
+        <div className="field-hint">
+          How many recent episodes to keep on disk for every show that does not set its
+          own. 0 downloads nothing until you queue an episode. Raising this starts
+          downloading straight away, so mind the disk on shows with long episodes.
         </div>
       </div>
 
