@@ -5,10 +5,11 @@ import { Empty, ErrorNotice, Loading } from "../components/Loading";
 import { isNewArrival } from "../lib/newness";
 import { useEpisodes, useFeedActions, useFeeds, useQueue } from "../lib/queries";
 
-type Filter = "all" | "unplayed" | "downloaded";
+type Filter = "all" | "unplayed" | "in_progress" | "downloaded";
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "unplayed", label: "Unplayed" },
+  { key: "in_progress", label: "In progress" },
   { key: "all", label: "All" },
   { key: "downloaded", label: "Downloaded" },
 ];
@@ -19,6 +20,7 @@ export function InboxPage() {
   const { data, isLoading, error } = useEpisodes({
     limit: 100,
     unplayed: filter === "unplayed" ? true : undefined,
+    in_progress: filter === "in_progress" ? true : undefined,
     downloaded: filter === "downloaded" ? true : undefined,
   });
   const { data: feeds } = useFeeds();
@@ -49,7 +51,11 @@ export function InboxPage() {
       <header className="page-head">
         <div>
           <h1 className="page-title">Inbox</h1>
-          <p className="page-subtitle">Every show, newest first by publication date.</p>
+          <p className="page-subtitle">
+            {filter === "in_progress"
+              ? "Started and not finished, most recently played first."
+              : "Every show, newest first by publication date."}
+          </p>
         </div>
       </header>
 
@@ -74,7 +80,9 @@ export function InboxPage() {
           <p>
             {filter === "unplayed"
               ? "You are all caught up."
-              : "No episodes match this filter yet."}
+              : filter === "in_progress"
+                ? "Nothing half-finished. Episodes you pause partway through show up here."
+                : "No episodes match this filter yet."}
           </p>
         </Empty>
       ) : (

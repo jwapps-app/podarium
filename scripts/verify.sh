@@ -263,6 +263,49 @@ api -X POST "$BASE/api/opml/import" -H 'content-type: text/xml' \
   --data-binary @"$TMP/export.opml" | grep -q '"imported":0' || fail "re-import created duplicates"
 pass "OPML round-trips without duplicating subscriptions"
 
+step "resume list"
+# Scaled to the episode rather than a fixed 300s: this feed's episodes run about four
+# minutes, and a position past the end is correctly *not* in progress. Half way through
+# the longest episode to hand is comfortably inside both thresholds.
+RESUME="$(python3 -c "
+import json
+items = json.load(open('$TMP/eps.json'))['items']
+timed = [e for e in items if (e['duration_seconds'] or 0) >= 130]
+best = max(timed, key=lambda e: e['duration_seconds'], default=None)
+print(f\"{best['id']} {best['duration_seconds'] // 2}\" if best else '')")"
+
+if [ -z "$RESUME" ]; then
+  printf '  ..   no episode long enough to exercise the resume thresholds; skipped\n'
+else
+  RESUME_ID="${RESUME% *}"
+  RESUME_POS="${RESUME#* }"
+  # played is cleared explicitly: an episode this script finished earlier is correctly
+  # not in progress, which would otherwise look like the filter dropping it.
+  api -X PUT "$BASE/api/episodes/$RESUME_ID/state" -H 'content-type: application/json' \
+    -d "{\"played\": false, \"position_seconds\": $RESUME_POS}" -o /dev/null
+  api "$BASE/api/episodes?in_progress=true&limit=50" > "$TMP/resume.json"
+  python3 - "$TMP/resume.json" "$RESUME_ID" <<'RESUME_CHECK' || fail "resume list is wrong"
+import json, sys
+
+items = json.load(open(sys.argv[1]))["items"]
+assert any(e["id"] == int(sys.argv[2]) for e in items), "part-listened episode missing"
+for e in items:
+    assert not e["played"], e
+    assert e["position_seconds"] > 60, e
+    if e["duration_seconds"]:
+        assert e["duration_seconds"] - e["position_seconds"] > 60, e
+    assert e["last_played_at"], e
+# Most recently played first: the point of the list is picking up where you left off.
+stamps = [e["last_played_at"] for e in items]
+assert stamps == sorted(stamps, reverse=True), stamps
+RESUME_CHECK
+  pass "resume list is bounded at both ends and ordered by last played"
+
+  # Leave no trace: this run's own episode should not sit in the resume list afterwards.
+  api -X PUT "$BASE/api/episodes/$RESUME_ID/state" -H 'content-type: application/json' \
+    -d '{"played": true, "position_seconds": 0}' -o /dev/null
+fi
+
 step "storage report"
 # Asserted as identities, not amounts: this run's own downloads and whatever else is on
 # this disk both move the totals, but the parts must always add up to the whole.

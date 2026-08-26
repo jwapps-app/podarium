@@ -586,7 +586,16 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
   text-overflow: ellipsis;
 }
 
-.player-show { font-size: 12px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* display:block, or none of the truncation below applies: this is an <a>, and ellipsis
+   does nothing to an inline box -- it simply overflowed the bar instead. */
+.player-show {
+  display: block;
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .player-center { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
 
@@ -657,6 +666,9 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 .scrubber::-moz-range-thumb { width: 12px; height: 12px; border: none; border-radius: 50%; background: var(--accent); }
 
 .player-right { display: flex; align-items: center; gap: 6px; width: 280px; justify-content: flex-end; }
+
+/* Shown only where the centred cluster is hidden -- see the 560px block. */
+.player-play-compact { display: none; }
 
 .rate-btn { min-width: 44px; font-variant-numeric: tabular-nums; font-size: 12.5px; }
 
@@ -1045,6 +1057,11 @@ button.player-title:hover { color: var(--accent); }
 
 @media (max-width: 560px) {
   .player-center .player-buttons { display: none; }
+
+  /* ...so the play button moves in beside the rate and stop controls. The bar can appear
+     paused on launch, holding whatever was playing when the app was last closed, and it
+     needs something to press. */
+  .player-play-compact { display: inline-flex; }
   /* Fixed three across rather than auto-fill. A minimum tile width fits only two on a
      narrow phone, which wastes the row and makes a library of any size a long scroll.
      The gap tightens so three tiles still get a usable share of the width. */

@@ -153,6 +153,8 @@ class EpisodeOut(BaseModel):
     played: bool = False
     position_seconds: int = 0
     completed_at: datetime | None = None
+    # Exposed so a client can build its own resume list without re-deriving the order.
+    last_played_at: datetime | None = None
     starred: bool = False
     updated_at: datetime
 
@@ -308,6 +310,7 @@ def episode_out(episode: Episode, state=None) -> EpisodeOut:
         played=bool(state.played) if state else False,
         position_seconds=int(state.position_seconds) if state else 0,
         completed_at=state.completed_at if state else None,
+        last_played_at=state.last_played_at if state else None,
         starred=bool(state.starred) if state else False,
         updated_at=episode.updated_at,
     )

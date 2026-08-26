@@ -45,6 +45,22 @@ export function PlayerBar() {
     player.setPlaybackRate(PLAYBACK_RATES[(index + 1) % PLAYBACK_RATES.length]);
   };
 
+  const playPause = (
+    <button
+      className="play-btn"
+      onClick={player.toggle}
+      aria-label={player.playing ? "Pause" : "Play"}
+    >
+      {player.buffering ? (
+        <span className="spinner" style={{ borderTopColor: "currentColor" }} />
+      ) : player.playing ? (
+        <PauseIcon />
+      ) : (
+        <PlayIcon />
+      )}
+    </button>
+  );
+
   return (
     <div className="player" role="region" aria-label="Now playing">
       <div className="player-now">
@@ -85,19 +101,7 @@ export function PlayerBar() {
           <button className="btn-icon" onClick={() => player.skip(-10)} aria-label="Back 10 seconds" title="Back 10 seconds">
             <Back10Icon />
           </button>
-          <button
-            className="play-btn"
-            onClick={player.toggle}
-            aria-label={player.playing ? "Pause" : "Play"}
-          >
-            {player.buffering ? (
-              <span className="spinner" style={{ borderTopColor: "currentColor" }} />
-            ) : player.playing ? (
-              <PauseIcon />
-            ) : (
-              <PlayIcon />
-            )}
-          </button>
+          {playPause}
           <button className="btn-icon" onClick={() => player.skip(30)} aria-label="Forward 30 seconds" title="Forward 30 seconds">
             <Forward30Icon />
           </button>
@@ -124,6 +128,12 @@ export function PlayerBar() {
         {player.error ? (
           <span style={{ fontSize: 12, color: "var(--danger)" }}>{player.error}</span>
         ) : null}
+        {/* The narrow-phone home for the play button: the centred cluster is hidden at this
+            width, and the bar can now come up paused on launch holding what you were last
+            listening to. Without this, resuming would mean knowing to open the full view
+            first. Only one of the two is ever in the document -- the other is display:none,
+            so it leaves the accessibility tree with it. */}
+        <span className="player-play-compact">{playPause}</span>
         <button className="btn btn-sm rate-btn" onClick={cycleRate} title="Playback speed">
           {player.playbackRate}×
         </button>

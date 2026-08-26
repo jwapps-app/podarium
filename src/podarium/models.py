@@ -190,6 +190,12 @@ class EpisodeState(Base):
     position_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     starred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # When playback last advanced, which is what "continue listening" orders by.
+    #
+    # Distinct from updated_at, which moves for any write at all: starring a half-finished
+    # episode from six months ago would otherwise jump it above the one paused ten minutes
+    # ago. NULL means never played, only ever starred or marked.
+    last_played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     # Drives delta sync.
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now(), index=True)
 

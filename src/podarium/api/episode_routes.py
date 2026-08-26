@@ -25,6 +25,15 @@ router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 # before this existed and is fine for two devices one person is holding.
 CONCURRENT_WRITE_TOLERANCE = timedelta(seconds=60)
 
+# What counts as "in progress".
+#
+# Both ends need a floor or the list fills with things you have not really started and
+# things you have effectively finished. Tapping play and stopping ten seconds in is not a
+# commitment to an episode, and the last minute is credits -- neither is worth coming back
+# to, and either would sit in the list forever because nothing else clears it.
+IN_PROGRESS_MIN_ELAPSED = 60
+IN_PROGRESS_MIN_REMAINING = 60
+
 
 def _is_stale(changed_at: datetime | None, stored_at: datetime | None) -> bool:
     """Whether a write describes a moment that has already been overtaken.
@@ -75,6 +84,7 @@ async def list_episodes(
     unplayed: bool | None = Query(default=None),
     downloaded: bool | None = Query(default=None),
     starred: bool | None = Query(default=None),
+    in_progress: bool | None = Query(default=None),
     since: datetime | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None),
@@ -86,26 +96,35 @@ async def list_episodes(
     ``since`` and the sort both key off ``first_seen_at``, not ``published_at``: a
     publisher re-stamping pubDate across its back catalogue must not shuffle the inbox or
     make an archive look new.
+
+    ``in_progress`` is the exception, and orders by when you last listened instead.
     """
     state = aliased(EpisodeState)
 
-    # Chronological by publication, but never later than when this server first saw the
-    # episode.
-    #
-    # Sorting on published_at alone would read naturally right up until a publisher migrates
-    # hosts and re-stamps pubDate across its whole archive -- the case first_seen_at exists
-    # for -- at which point hundreds of old episodes leap to the top of the inbox. Sorting on
-    # first_seen_at alone avoids that but clumps by subscription: a show added today lands
-    # its entire back catalogue above episodes from shows added last week, whatever their
-    # real dates.
-    #
-    # Taking the earlier of the two gives the natural order in the normal case, because
-    # publication precedes discovery, while capping a re-stamped episode at the moment we
-    # first saw it so it cannot climb. "Is this new?" is unaffected -- that still compares
-    # first_seen_at against the feed's last_seen_at.
-    sort_key = func.least(
-        func.coalesce(Episode.published_at, Episode.first_seen_at), Episode.first_seen_at
-    ).label("sort_key")
+    if in_progress:
+        # Resume order, not catalogue order. A list of half-finished episodes sorted by
+        # publication date puts the one you paused ten minutes ago below a fortnight-old
+        # one, which is exactly backwards: the only useful order here is the order you left
+        # them in. Falling back to updated_at covers rows the backfill could not date.
+        sort_key = func.coalesce(state.last_played_at, state.updated_at).label("sort_key")
+    else:
+        # Chronological by publication, but never later than when this server first saw the
+        # episode.
+        #
+        # Sorting on published_at alone would read naturally right up until a publisher
+        # migrates hosts and re-stamps pubDate across its whole archive -- the case
+        # first_seen_at exists for -- at which point hundreds of old episodes leap to the top
+        # of the inbox. Sorting on first_seen_at alone avoids that but clumps by
+        # subscription: a show added today lands its entire back catalogue above episodes
+        # from shows added last week, whatever their real dates.
+        #
+        # Taking the earlier of the two gives the natural order in the normal case, because
+        # publication precedes discovery, while capping a re-stamped episode at the moment we
+        # first saw it so it cannot climb. "Is this new?" is unaffected -- that still compares
+        # first_seen_at against the feed's last_seen_at.
+        sort_key = func.least(
+            func.coalesce(Episode.published_at, Episode.first_seen_at), Episode.first_seen_at
+        ).label("sort_key")
 
     statement = (
         select(Episode, state, sort_key)
@@ -135,6 +154,16 @@ async def list_episodes(
         statement = statement.where(Episode.local_path.is_(None))
     if starred is True:
         statement = statement.where(state.starred.is_(True))
+    if in_progress is True:
+        # Started, not finished, and far enough from either end to be worth resuming. An
+        # episode with no duration in its feed cannot be checked against the far end, so it
+        # is kept: better a stale row than silently dropping an episode you did start.
+        statement = statement.where(
+            (state.played.is_(None)) | (state.played.is_(False))
+        ).where(state.position_seconds > IN_PROGRESS_MIN_ELAPSED).where(
+            (Episode.duration_seconds.is_(None))
+            | (Episode.duration_seconds - state.position_seconds > IN_PROGRESS_MIN_REMAINING)
+        )
     if since is not None:
         statement = statement.where(Episode.first_seen_at > since)
     if cursor:
@@ -222,6 +251,10 @@ async def update_state(
         state.played = body.played
     if body.position_seconds is not None:
         state.position_seconds = body.position_seconds
+        # A position write is the one signal that means "was listening": the player sends
+        # it while playing and again on pause. Stamped here rather than on any state write
+        # so that starring or marking an old episode cannot pass for listening to it.
+        state.last_played_at = datetime.now(UTC)
     if body.starred is not None:
         state.starred = body.starred
 

@@ -82,6 +82,7 @@ export interface Episode {
   played: boolean;
   position_seconds: number;
   completed_at: string | null;
+  last_played_at: string | null;
   starred: boolean;
   updated_at: string;
 }
@@ -152,6 +153,8 @@ export interface EpisodeFilters {
   unplayed?: boolean;
   downloaded?: boolean;
   starred?: boolean;
+  /** Started, not finished, ordered by when you last listened. */
+  in_progress?: boolean;
   since?: string;
   limit?: number;
   cursor?: string;

@@ -52,6 +52,9 @@ interface PlayerValue {
 
 const PlayerContext = createContext<PlayerValue | null>(null);
 
+/** Hoisted so the query key is a stable reference across renders. */
+const RESUME_FILTERS = { in_progress: true, limit: 1 } as const;
+
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const queryClient = useQueryClient();
@@ -119,8 +122,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
-  const play = useCallback(
-    (next: Episode) => {
+  /** Load an episode into the player, optionally starting it.
+   *
+   *  Without autoplay this is how the app comes back up holding whatever you were last
+   *  listening to: the bar appears, seeked to your position, waiting on a tap. It has to
+   *  be a separate path rather than play()-then-pause() because a browser will refuse the
+   *  play() outright without a user gesture behind it, and a refusal surfaces as a
+   *  playback error the user never caused.
+   */
+  const cue = useCallback(
+    (next: Episode, { autoplay }: { autoplay: boolean }) => {
       const audio = audioRef.current;
       if (!audio) return;
 
@@ -132,7 +143,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       if (episodeRef.current?.id === next.id) {
-        void audio.play().catch((cause) => setError(String(cause)));
+        if (autoplay) void audio.play().catch((cause) => setError(String(cause)));
         return;
       }
 
@@ -149,22 +160,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.playbackRate = rateRef.current;
 
       const startAt = next.played ? 0 : next.position_seconds;
-      const beginPlayback = () => {
+      const begin = () => {
         // Seeking before metadata arrives is silently ignored, so resume happens here.
         if (startAt > 0 && Number.isFinite(audio.duration) && startAt < audio.duration) {
           audio.currentTime = startAt;
         }
-        void audio.play().catch((cause) => setError(String(cause)));
+        if (autoplay) void audio.play().catch((cause) => setError(String(cause)));
       };
 
       if (audio.readyState >= 1) {
-        beginPlayback();
+        begin();
       } else {
-        audio.addEventListener("loadedmetadata", beginPlayback, { once: true });
+        audio.addEventListener("loadedmetadata", begin, { once: true });
       }
     },
     [reportPosition],
   );
+
+  const play = useCallback((next: Episode) => cue(next, { autoplay: true }), [cue]);
 
   const toggle = useCallback(() => {
     const audio = audioRef.current;
@@ -202,6 +215,35 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const { data: appSettings } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const defaultRate = appSettings?.default_playback_rate;
+
+  // Come back up holding whatever was playing when the app was last closed.
+  //
+  // Position has always been saved server-side, but nothing remembered *which* episode, so
+  // reopening the PWA left an empty player and no route back to the thing you were halfway
+  // through -- on a phone, where the app is evicted from memory constantly, that is most
+  // times you open it. The server's resume list already answers "what was I listening to",
+  // so the first entry is loaded paused, at its saved position.
+  const { data: resumable } = useQuery({
+    queryKey: ["episodes", RESUME_FILTERS],
+    queryFn: () => api.episodes(RESUME_FILTERS),
+  });
+
+  const restoredRef = useRef(false);
+
+  useEffect(() => {
+    // Exactly once per launch, on the query's first answer.
+    //
+    // The flag is set before the checks below rather than after, because this query is
+    // invalidated every time playback reports a position. Marking it only on a successful
+    // cue would leave the effect live for the rest of the session, and a later refetch
+    // would then reload the player seconds after the user had deliberately stopped it.
+    if (restoredRef.current || resumable === undefined) return;
+    restoredRef.current = true;
+
+    const candidate = resumable.items[0];
+    if (!candidate || episodeRef.current) return;
+    cue(candidate, { autoplay: false });
+  }, [resumable, cue]);
 
   useEffect(() => {
     if (defaultRate === undefined || rateTouchedRef.current) return;
