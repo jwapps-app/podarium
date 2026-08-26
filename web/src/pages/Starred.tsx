@@ -44,6 +44,7 @@ export function StarredPage() {
               key={episode.id}
               episode={episode}
               showTitle={feedsById.get(episode.feed_id)?.title ?? null}
+              feedUrl={feedsById.get(episode.feed_id)?.feed_url}
               queued={queuedIds.has(episode.id)}
             />
           ))}

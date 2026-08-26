@@ -5,8 +5,10 @@ import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import { usePlayer } from "../lib/player";
 import { useEpisodeActions } from "../lib/queries";
 import { sanitizeHtml } from "../lib/sanitize";
+import { podlinkEpisodeUrl } from "../lib/share";
 import type { Episode } from "../lib/types";
 import { Artwork } from "./Artwork";
+import { ShareButton } from "./ShareButton";
 import {
   CheckIcon,
   DownloadIcon,
@@ -21,16 +23,19 @@ interface Props {
   episode: Episode;
   /** Feed title, when the row is shown outside its own feed page. */
   showTitle?: string | null;
+  /** Needed to build the share link; the pod.link URL is keyed to the feed. */
+  feedUrl?: string | null;
   queued?: boolean;
   /** An episode first seen in the last day gets a "new" tag. Keyed off first_seen_at,
    *  never published_at -- a publisher re-stamping pubDate must not light up the inbox. */
   isNew?: boolean;
 }
 
-export function EpisodeRow({ episode, showTitle, queued, isNew }: Props) {
+export function EpisodeRow({ episode, showTitle, feedUrl, queued, isNew }: Props) {
   const player = usePlayer();
   const actions = useEpisodeActions();
   const [expanded, setExpanded] = useState(false);
+  const shareUrl = podlinkEpisodeUrl(feedUrl, episode.guid);
 
   const isCurrent = player.episode?.id === episode.id;
   const isPlaying = isCurrent && player.playing;
@@ -157,6 +162,14 @@ export function EpisodeRow({ episode, showTitle, queued, isNew }: Props) {
         >
           {episode.downloaded ? <TrashIcon /> : <DownloadIcon />}
         </button>
+
+        {shareUrl ? (
+          <ShareButton
+            url={shareUrl}
+            title={episode.title ?? "Episode"}
+            showTitle={showTitle}
+          />
+        ) : null}
 
         <button
           className={`btn-icon${episode.starred ? " on" : ""}`}

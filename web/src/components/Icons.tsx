@@ -103,6 +103,10 @@ export const LogoutIcon = (p: Props) => (
   <svg {...base} {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" /></svg>
 );
 
+export const ShareIcon = (p: Props) => (
+  <svg {...base} {...p}><path d="M12 3v13" /><path d="m7.5 7.5 4.5-4.5 4.5 4.5" /><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" /></svg>
+);
+
 export const BrandMark = (p: Props) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" {...p}>
     <path d="M12 14.5a3 3 0 0 0 3-3v-4a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3z" />

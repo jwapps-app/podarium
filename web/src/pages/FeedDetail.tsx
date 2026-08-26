@@ -146,6 +146,7 @@ export function FeedDetailPage() {
             <EpisodeRow
               key={episode.id}
               episode={episode}
+              feedUrl={feed.feed_url}
               queued={queuedIds.has(episode.id)}
               isNew={isNewArrival(episode, feed)}
             />

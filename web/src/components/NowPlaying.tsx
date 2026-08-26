@@ -5,7 +5,9 @@ import { formatClock, formatDate, formatDuration } from "../lib/format";
 import { PLAYBACK_RATES, usePlayer } from "../lib/player";
 import { useEpisodeActions, useFeeds, useQueue } from "../lib/queries";
 import { sanitizeHtml } from "../lib/sanitize";
+import { podlinkEpisodeUrl } from "../lib/share";
 import { Artwork } from "./Artwork";
+import { ShareButton } from "./ShareButton";
 import {
   Back10Icon,
   CheckIcon,
@@ -55,6 +57,7 @@ export function NowPlaying() {
   const duration = player.duration || episode.duration_seconds || 0;
   const percent = duration > 0 ? (player.position / duration) * 100 : 0;
   const queued = new Set((queue ?? []).map((item) => item.episode_id)).has(episode.id);
+  const shareUrl = podlinkEpisodeUrl(feed?.feed_url, episode.guid);
 
   const upNext = (queue ?? [])
     .filter((item) => item.episode_id !== episode.id)
@@ -185,6 +188,14 @@ export function NowPlaying() {
             >
               {episode.downloaded ? <TrashIcon /> : <DownloadIcon />}
             </button>
+            {shareUrl ? (
+              <ShareButton
+                url={shareUrl}
+                title={episode.title ?? "Episode"}
+                showTitle={feed?.title}
+              />
+            ) : null}
+
             <button
               className={`btn-icon${episode.starred ? " on" : ""}`}
               onClick={() => actions.setState.mutate({ id: episode.id, starred: !episode.starred })}

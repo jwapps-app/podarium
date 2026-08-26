@@ -877,6 +877,39 @@ button.player-title:hover { color: var(--accent); }
   .np-transport { gap: 30px; }
 }
 
+/* ---------------------------------------------------------------- share */
+
+.share-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.share-panel {
+  width: 100%;
+  max-width: 460px;
+  padding: 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow);
+}
+
+.share-title { font-size: 15px; font-weight: 620; line-height: 1.35; }
+
+.share-hint { color: var(--text-muted); font-size: 13px; margin: 6px 0 14px; }
+
+.share-url { width: 100%; margin-bottom: 12px; }
+
+.share-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.share-actions .btn { text-decoration: none; }
+
 /* ---------------------------------------------------------------- forms */
 
 .field { margin-bottom: 15px; }
