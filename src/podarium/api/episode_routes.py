@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -51,10 +51,29 @@ async def list_episodes(
     make an archive look new.
     """
     state = aliased(EpisodeState)
+
+    # Chronological by publication, but never later than when this server first saw the
+    # episode.
+    #
+    # Sorting on published_at alone would read naturally right up until a publisher migrates
+    # hosts and re-stamps pubDate across its whole archive -- the case first_seen_at exists
+    # for -- at which point hundreds of old episodes leap to the top of the inbox. Sorting on
+    # first_seen_at alone avoids that but clumps by subscription: a show added today lands
+    # its entire back catalogue above episodes from shows added last week, whatever their
+    # real dates.
+    #
+    # Taking the earlier of the two gives the natural order in the normal case, because
+    # publication precedes discovery, while capping a re-stamped episode at the moment we
+    # first saw it so it cannot climb. "Is this new?" is unaffected -- that still compares
+    # first_seen_at against the feed's last_seen_at.
+    sort_key = func.least(
+        func.coalesce(Episode.published_at, Episode.first_seen_at), Episode.first_seen_at
+    ).label("sort_key")
+
     statement = (
-        select(Episode, state)
+        select(Episode, state, sort_key)
         .outerjoin(state, (state.episode_id == Episode.id) & (state.user_id == user.id))
-        .order_by(Episode.first_seen_at.desc(), Episode.id.desc())
+        .order_by(sort_key.desc(), Episode.id.desc())
         .limit(limit + 1)
     )
 
@@ -77,17 +96,18 @@ async def list_episodes(
             cursor_stamp, cursor_id = decode_cursor(cursor)
         except InvalidCursor as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
+        # Keyed to the same expression the ordering uses, or paging would skip and repeat.
         statement = statement.where(
-            (Episode.first_seen_at < cursor_stamp)
-            | ((Episode.first_seen_at == cursor_stamp) & (Episode.id < cursor_id))
+            (sort_key < cursor_stamp)
+            | ((sort_key == cursor_stamp) & (Episode.id < cursor_id))
         )
 
     rows = (await session.execute(statement)).all()
     has_more = len(rows) > limit
     rows = rows[:limit]
 
-    items = [episode_out(episode, episode_state) for episode, episode_state in rows]
-    next_cursor = encode_cursor(rows[-1][0].first_seen_at, rows[-1][0].id) if has_more and rows else None
+    items = [episode_out(episode, episode_state) for episode, episode_state, _ in rows]
+    next_cursor = encode_cursor(rows[-1][2], rows[-1][0].id) if has_more and rows else None
     return EpisodeListOut(items=items, next_cursor=next_cursor)
 
 

@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import { useAuth } from "../lib/auth";
-import { useEpisodes, useQueue } from "../lib/queries";
+import { useFeeds, useQueue } from "../lib/queries";
 import {
   BrandMark,
   InboxIcon,
@@ -17,9 +17,15 @@ import { PlayerBar } from "./PlayerBar";
 export function Layout() {
   const { logout } = useAuth();
   const { data: queue } = useQueue();
-  const { data: unplayed } = useEpisodes({ unplayed: true, limit: 200 });
+  const { data: feeds } = useFeeds();
 
-  const unplayedCount = unplayed?.items.length ?? 0;
+  // The sum of the library tiles' badges, so the two always agree: whatever this says, you
+  // get the same number by adding up the shows. Counting unplayed instead -- which is what
+  // this used to do -- pins it at "199+" forever, because a subscription's back catalogue
+  // is a backlog nobody intends to finish rather than a list of things to deal with.
+  const newCount = (feeds ?? [])
+    .filter((feed) => feed.active)
+    .reduce((total, feed) => total + (feed.new_episode_count ?? 0), 0);
 
   return (
     <div className="app">
@@ -37,8 +43,10 @@ export function Layout() {
         <NavLink to="/inbox" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           <InboxIcon />
           Inbox
-          {unplayedCount > 0 ? (
-            <span className="nav-count">{unplayedCount > 199 ? "199+" : unplayedCount}</span>
+          {newCount > 0 ? (
+            <span className="nav-count" title={`${newCount} new since you last opened these shows`}>
+              {newCount > 99 ? "99+" : newCount}
+            </span>
           ) : null}
         </NavLink>
 
