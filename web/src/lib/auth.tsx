@@ -7,8 +7,10 @@ import type { User } from "./types";
 interface AuthValue {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, totpCode?: string) => Promise<void>;
   logout: () => Promise<void>;
+  /** Re-read the current user, after something like enabling a second factor. */
+  refresh: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
@@ -38,8 +40,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
-    setUser(await api.login(username, password));
+  const login = useCallback(
+    async (username: string, password: string, totpCode?: string) => {
+      setUser(await api.login(username, password, totpCode));
+    },
+    [],
+  );
+
+  const refresh = useCallback(async () => {
+    setUser(await api.me());
   }, []);
 
   const logout = useCallback(async () => {
@@ -47,7 +56,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  const value = useMemo(() => ({ user, loading, login, logout }), [user, loading, login, logout]);
+  const value = useMemo(
+    () => ({ user, loading, login, logout, refresh }),
+    [user, loading, login, logout, refresh],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

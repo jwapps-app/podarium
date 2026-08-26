@@ -73,6 +73,30 @@ from PinePods.
 The image builds the web UI in its own stage and serves it from `/app/web`, so there is
 one container and one port for both the API and the UI.
 
+## Locked out
+
+Two-factor codes are checked against a secret stored encrypted with a key derived from
+`SECRET_KEY`. Change that variable and the secret can no longer be read — sign-in then says
+so explicitly rather than pretending the code was wrong.
+
+Either way, the way back in is one statement on the host. It clears the second factor and
+leaves the password alone:
+
+```bash
+docker exec podarium-db psql -U podarium -d podarium \
+  -c "update users set totp_secret = null, totp_last_step = null"
+```
+
+The same applies if repeated failures have locked sign-in and you would rather not wait out
+the window:
+
+```bash
+docker exec podarium-db psql -U podarium -d podarium -c "delete from login_attempts"
+```
+
+Both require access to the host, which is the point: they are recovery for the person who
+owns the machine, not a bypass reachable from the login form.
+
 ## Invariants
 
 Changes to this codebase should preserve these. Each has a test.
@@ -89,4 +113,6 @@ Changes to this codebase should preserve these. Each has a test.
 - `first_seen_at`, not `published_at`, decides whether an episode is new.
 - Feed refresh is idempotent.
 - Every user-scoped table carries `user_id`, even with exactly one user.
+- A one-time code is accepted once. Its 30-second window makes a code seen over a shoulder
+  or in a log otherwise replayable.
 - Nothing large or churny is written to the VM disk.

@@ -71,6 +71,13 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = _now_col(nullable=False)
 
+    # Encrypted with a key derived from SECRET_KEY, which lives in the environment rather
+    # than here -- so this column on its own, in a backup or a dump, is not a second factor.
+    totp_secret: Mapped[str | None] = mapped_column(Text)
+
+    # The last 30-second step accepted, so a code cannot be used twice inside its window.
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
+
 
 class ApiToken(Base):
     """Long-lived bearer tokens for non-browser clients (the iOS app).

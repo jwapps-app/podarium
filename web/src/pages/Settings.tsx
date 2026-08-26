@@ -8,7 +8,7 @@ import { formatBytes, formatRelativeExact } from "../lib/format";
 import { PLAYBACK_RATES } from "../lib/player";
 import { useAuth } from "../lib/auth";
 import { useSettings } from "../lib/queries";
-import type { CreatedApiToken, OpmlImportResult, RetentionMode } from "../lib/types";
+import type { CreatedApiToken, OpmlImportResult, RetentionMode, TotpSetup } from "../lib/types";
 
 export function SettingsPage() {
   const { data: settings, isLoading, error } = useSettings();
@@ -45,17 +45,105 @@ export function SettingsPage() {
 }
 
 function AccountPanel() {
-  const { user, logout } = useAuth();
+  const { user, logout, refresh } = useAuth();
+  const [setup, setSetup] = useState<TotpSetup | null>(null);
+  const [code, setCode] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const begin = async () => {
+    setError(null);
+    try {
+      setSetup(await api.totpSetup());
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const confirm = async () => {
+    if (!setup) return;
+    setError(null);
+    try {
+      await api.totpEnable(setup.secret, code);
+      setSetup(null);
+      setCode("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
+
+  const turnOff = async () => {
+    setError(null);
+    try {
+      await api.totpDisable(password);
+      setPassword("");
+      await refresh();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    }
+  };
 
   return (
     <div className="panel">
       <div className="panel-title">Account</div>
-      <p className="panel-hint">
-        Signed in as {user?.username ?? "unknown"}.
-      </p>
-      <button className="btn" onClick={() => void logout()}>
-        Sign out
-      </button>
+      <p className="panel-hint">Signed in as {user?.username ?? "unknown"}.</p>
+
+      <div className="field">
+        <label>Two-factor authentication</label>
+        {user?.totp_enabled ? (
+          <>
+            <div className="field-hint" style={{ marginBottom: 10 }}>
+              On. A code from your authenticator is required to sign in.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                type="password"
+                placeholder="Confirm your password"
+                value={password}
+                autoComplete="current-password"
+                onChange={(event) => setPassword(event.target.value)}
+                style={{ flex: 1, minWidth: 200 }}
+              />
+              <button className="btn btn-danger" disabled={!password} onClick={() => void turnOff()}>
+                Turn off
+              </button>
+            </div>
+          </>
+        ) : setup ? (
+          <>
+            <div className="field-hint" style={{ marginBottom: 10 }}>
+              Add this to your authenticator, then enter a code to confirm. Nothing changes
+              until a code checks out, so a mistyped secret cannot lock you out.
+            </div>
+            <input className="mono" readOnly value={setup.secret} style={{ marginBottom: 8 }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                value={code}
+                inputMode="numeric"
+                placeholder="123456"
+                onChange={(event) => setCode(event.target.value)}
+                style={{ flex: 1, minWidth: 140 }}
+              />
+              <button className="btn btn-primary" disabled={code.length < 6} onClick={() => void confirm()}>
+                Confirm
+              </button>
+              <button className="btn" onClick={() => setSetup(null)}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="field-hint" style={{ marginBottom: 10 }}>
+              Off. Your password is the only thing protecting this server from the internet.
+            </div>
+            <button className="btn" onClick={() => void begin()}>Turn on</button>
+          </>
+        )}
+      </div>
+
+      {error ? <div className="notice notice-error" style={{ marginBottom: 14 }}>{error}</div> : null}
+
+      <button className="btn" onClick={() => void logout()}>Sign out</button>
     </div>
   );
 }

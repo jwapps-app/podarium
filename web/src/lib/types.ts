@@ -7,6 +7,12 @@ export interface User {
   id: number;
   username: string;
   created_at: string;
+  totp_enabled: boolean;
+}
+
+export interface TotpSetup {
+  secret: string;
+  provisioning_uri: string;
 }
 
 export interface ApiTokenSummary {

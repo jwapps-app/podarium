@@ -27,12 +27,33 @@ class ErrorResponse(BaseModel):
 class LoginRequest(BaseModel):
     username: str
     password: str
+    # Required only once a second factor is enabled. A sign-in without it then fails with
+    # code "totp_required", which is how the form knows to ask rather than to complain
+    # that the password was wrong.
+    totp_code: str | None = None
 
 
 class UserOut(BaseModel):
     id: int
     username: str
     created_at: datetime
+    totp_enabled: bool = False
+
+
+class TotpSetupOut(BaseModel):
+    """A pending secret. Not in force until a code from it has been confirmed."""
+
+    secret: str
+    provisioning_uri: str
+
+
+class TotpEnableRequest(BaseModel):
+    code: str
+
+
+class TotpDisableRequest(BaseModel):
+    # The password again, so a borrowed session cannot quietly remove the second factor.
+    password: str
 
 
 class TokenCreateRequest(BaseModel):

@@ -10,6 +10,7 @@ import type {
   QueueItem,
   RetentionMode,
   SearchResult,
+  TotpSetup,
   User,
 } from "./types";
 
@@ -113,10 +114,24 @@ export const api = {
   // -- auth ---------------------------------------------------------------
   me: () => request<User>("/api/auth/me"),
 
-  login: (username: string, password: string) =>
+  login: (username: string, password: string, totpCode?: string) =>
     request<User>("/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({ username, password, totp_code: totpCode || undefined }),
+    }),
+
+  totpSetup: () => request<TotpSetup>("/api/auth/totp/setup", { method: "POST" }),
+
+  totpEnable: (secret: string, code: string) =>
+    request<User>(`/api/auth/totp/enable?secret=${encodeURIComponent(secret)}`, {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+
+  totpDisable: (password: string) =>
+    request<User>("/api/auth/totp/disable", {
+      method: "POST",
+      body: JSON.stringify({ password }),
     }),
 
   logout: () => request<void>("/api/auth/logout", { method: "POST" }),

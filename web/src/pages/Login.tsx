@@ -8,6 +8,10 @@ export function LoginPage() {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  // Only asked for once the server says the account has a second factor, so the form does
+  // not present a field most sign-ins do not need.
+  const [totpCode, setTotpCode] = useState("");
+  const [totpRequired, setTotpRequired] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -16,9 +20,12 @@ export function LoginPage() {
     setBusy(true);
     setError(null);
     try {
-      await login(username, password);
+      await login(username, password, totpCode);
     } catch (cause) {
-      if (cause instanceof ApiError && cause.isRateLimited) {
+      if (cause instanceof ApiError && cause.message === "totp_required") {
+        setTotpRequired(true);
+        setError(null);
+      } else if (cause instanceof ApiError && cause.isRateLimited) {
         // Its own message, not a wrong-password one: retrying immediately is exactly the
         // wrong response, and only this case can say so.
         const seconds = Number(/(\d+) seconds/.exec(cause.message)?.[1] ?? 0);
@@ -71,10 +78,26 @@ export function LoginPage() {
           />
         </div>
 
+        {totpRequired ? (
+          <div className="field">
+            <label htmlFor="totp">Authentication code</label>
+            <input
+              id="totp"
+              value={totpCode}
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="123456"
+              autoFocus
+              onChange={(event) => setTotpCode(event.target.value)}
+            />
+            <div className="field-hint">The six digits from your authenticator app.</div>
+          </div>
+        ) : null}
+
         {error ? <div className="notice notice-error" style={{ marginBottom: 14 }}>{error}</div> : null}
 
         <button className="btn btn-primary" type="submit" disabled={busy || !username || !password} style={{ width: "100%" }}>
-          {busy ? "Signing in…" : "Sign in"}
+          {busy ? "Signing in…" : totpRequired ? "Verify" : "Sign in"}
         </button>
       </form>
     </div>
