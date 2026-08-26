@@ -12,9 +12,9 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from podarium import __version__
@@ -116,7 +116,37 @@ for module in (
     app.include_router(module.router)
 
 
-# Phase 2 mounts the built web UI here. Absent in phase 1, which is API-only.
-_web_root = get_settings().download_dir.parent / "web"
-if _web_root.is_dir():
-    app.mount("/", StaticFiles(directory=str(_web_root), html=True), name="web")
+# The built web UI, when one is present.
+#
+# Order matters: this block runs after every API router is registered, so /api, /healthz
+# and /metrics already own their paths and the catch-all below cannot shadow them.
+_web_root = get_settings().web_dir
+
+if _web_root.is_dir() and (_web_root / "index.html").is_file():
+    _index = _web_root / "index.html"
+
+    if (_web_root / "assets").is_dir():
+        # Hashed filenames, so these can be cached hard.
+        app.mount("/assets", StaticFiles(directory=str(_web_root / "assets")), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def serve_spa(path: str) -> Response:
+        """History fallback for the single-page app.
+
+        A deep link like /feeds/3 is a client-side route with no file behind it, so
+        anything that is not a real file returns index.html and lets the router take over.
+        An unknown /api path must still 404 as JSON rather than being handed HTML, which
+        would turn a typo into a confusing parse error in the client.
+        """
+        if path.startswith("api/"):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Not found")
+
+        candidate = (_web_root / path).resolve()
+        if path and _web_root.resolve() in candidate.parents and candidate.is_file():
+            return FileResponse(candidate)
+
+        return FileResponse(_index, headers={"Cache-Control": "no-cache"})
+
+    log.info("serving web UI from %s", _web_root)
+else:
+    log.info("no web UI at %s; running API-only", _web_root)

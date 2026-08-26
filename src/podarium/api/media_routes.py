@@ -175,6 +175,7 @@ async def stream_episode(
 async def get_image(
     kind: str,
     object_id: int,
+    request: Request,
     _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
@@ -202,8 +203,20 @@ async def get_image(
     if entry is None or not entry.local_path or not Path(entry.local_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No artwork available")
 
+    # The URL is stable but its content is not: a publisher can change their cover art, and
+    # /api/images/feed/2 then has to start returning a different image. So the response is
+    # validated rather than cached blind, with the ETag keyed to the source URL's hash --
+    # new art means a new hash means an immediate refetch.
+    #
+    # "private" because this endpoint is behind auth and must not sit in a shared proxy.
+    etag = f'"{entry.url_hash}"'
+    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=60, must-revalidate"}
+
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
+
     return FileResponse(
         entry.local_path,
         media_type=entry.content_type or "image/jpeg",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers=cache_headers,
     )

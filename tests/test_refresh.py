@@ -142,3 +142,38 @@ async def test_fetch_failure_backs_the_feed_off(session):
     await refresh_feed(session, feed, user_agent="test")
     assert feed.fetch_error_count == 0
     assert feed.fetch_error is None
+
+
+@respx.mock
+async def test_backlog_is_inserted_oldest_first(session):
+    """Ids must ascend with publication date.
+
+    Every episode of a new subscription shares one first_seen_at -- they really were all
+    first seen at once -- so listings fall through to the id tiebreak inside that batch.
+    Feeds are published newest-first, so inserting in document order would give the newest
+    episode the lowest id and show the user a backlog in reverse.
+    """
+    newest_first = build_feed(
+        items=[
+            {"guid": "ep-3", "title": "Third", "pub_date": "Mon, 15 Jan 2024 10:00:00 GMT"},
+            {"guid": "ep-2", "title": "Second", "pub_date": "Mon, 08 Jan 2024 10:00:00 GMT"},
+            {"guid": "ep-1", "title": "First", "pub_date": "Mon, 01 Jan 2024 10:00:00 GMT"},
+        ]
+    )
+    respx.get(FEED_URL).mock(return_value=httpx.Response(200, content=newest_first))
+    feed = await _make_feed(session)
+
+    await refresh_feed(session, feed, user_agent="test")
+
+    by_id = (
+        await session.execute(select(Episode).order_by(Episode.id))
+    ).scalars().all()
+    assert [e.title for e in by_id] == ["First", "Second", "Third"]
+
+    # Which means the listing's own ordering puts the newest episode at the top.
+    listed = (
+        await session.execute(
+            select(Episode).order_by(Episode.first_seen_at.desc(), Episode.id.desc())
+        )
+    ).scalars().all()
+    assert [e.title for e in listed] == ["Third", "Second", "First"]

@@ -1,5 +1,19 @@
 # syntax=docker/dockerfile:1
 
+# ---------------------------------------------------------------- web UI
+FROM node:22-slim AS web
+
+WORKDIR /web
+
+# Lockfile first, so a source edit does not reinstall node_modules.
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+
+COPY web/ ./
+RUN npm run build
+
+
+# ---------------------------------------------------------------- python deps
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
@@ -8,7 +22,6 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Dependencies resolve in their own layer so a source edit does not reinstall the world.
 COPY pyproject.toml README.md ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -16,11 +29,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     VIRTUAL_ENV=/opt/venv uv pip install .
 
 
+# ---------------------------------------------------------------- runtime
 FROM python:3.12-slim-bookworm
 
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    WEB_DIR=/app/web
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \
@@ -29,6 +44,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=web /web/dist ./web
 COPY src ./src
 COPY alembic ./alembic
 COPY alembic.ini ./

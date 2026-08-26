@@ -155,4 +155,35 @@ step "metrics"
 curl -sS "$BASE/metrics" | grep -q '^podarium_' || fail "no podarium metrics exposed"
 pass "Prometheus metrics exposed"
 
+step "web ui"
+if curl -sS -o /dev/null -w '%{http_code}' "$BASE/" | grep -q 200; then
+  curl -sS "$BASE/" | grep -qi '<div id="root"' || fail "index.html is not the built app"
+  pass "index.html served at /"
+
+  # A client-side route has no file behind it and must fall back to index.html.
+  curl -sS "$BASE/feeds/$FEED_ID" | grep -qi '<div id="root"' || fail "SPA deep link did not fall back"
+  pass "deep link falls back to index.html"
+
+  # ...but an unknown API path must still be JSON, not HTML.
+  curl -sS "$BASE/api/does-not-exist" | grep -q '"error"' || fail "unknown API path returned HTML"
+  pass "unknown /api path still returns a JSON error"
+
+  ASSET="$(curl -sS "$BASE/" | grep -o '/assets/[^"]*\.js' | head -1)"
+  [ -n "$ASSET" ] && [ "$(code "$BASE$ASSET")" = 200 ] || fail "bundle not served"
+  pass "hashed bundle served from /assets"
+
+  # Artwork is validated rather than cached blind: a publisher can change their cover art
+  # behind a URL that never changes.
+  ART_HEADERS="$TMP/art.txt"
+  curl -sS -b "$JAR" -D "$ART_HEADERS" -o /dev/null "$BASE/api/images/feed/$FEED_ID"
+  grep -qi '^etag:' "$ART_HEADERS" || fail "artwork served without an ETag"
+  grep -qi '^cache-control:.*must-revalidate' "$ART_HEADERS" || fail "artwork not revalidated"
+  ART_ETAG="$(grep -i '^etag:' "$ART_HEADERS" | tr -d '\r' | cut -d' ' -f2)"
+  [ "$(curl -sS -b "$JAR" -o /dev/null -w '%{http_code}' -H "If-None-Match: $ART_ETAG" "$BASE/api/images/feed/$FEED_ID")" = 304 ] \
+    || fail "artwork did not answer a conditional request with 304"
+  pass "artwork revalidates with an ETag"
+else
+  printf '  --   no web UI built; skipping (run: cd web && npm run build)\n'
+fi
+
 printf '\nAll checks passed.\n'

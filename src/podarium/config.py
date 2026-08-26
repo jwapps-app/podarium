@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     download_dir: Path = Path("./data/downloads")
     artwork_dir: Path = Path("./data/artwork")
 
+    # Built web UI (phase 2). Absent in an API-only deployment, in which case the server
+    # simply serves no HTML and every /api route behaves exactly as before.
+    web_dir: Path = Path("./web/dist")
+
     podcastindex_key: str | None = None
     podcastindex_secret: str | None = None
 

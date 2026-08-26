@@ -11,8 +11,8 @@ everything here:
 3. **It is a media server, not a sync service.** It stores audio, serves it with range
    requests, and manages retention.
 
-Phase 1 (this repository) is the server and its HTTP API. The web UI is phase 2, iOS is
-phase 3; both talk to the same API.
+Phases 1 and 2 are done: the server with its HTTP API, and the web UI that runs entirely
+against that public API. iOS is phase 3 and will use the same contract.
 
 ## Local development
 
@@ -26,6 +26,21 @@ uv run alembic upgrade head
 uv run uvicorn --app-dir src podarium.main:app --port 8044 --reload
 ```
 
+For the UI, either build it once and let the API serve it at `/`:
+
+```bash
+cd web && npm install && npm run build
+```
+
+or run the Vite dev server for hot reload, which proxies `/api` to port 8044:
+
+```bash
+cd web && npm run dev
+```
+
+The proxy matters for more than convenience: the session cookie is httpOnly, so
+`<audio src="/api/stream/...">` only carries it on a same-origin request.
+
 The user account is created on first boot from `PODARIUM_USERNAME` / `PODARIUM_PASSWORD`,
 and only while the `users` table is empty — restarting will not reset the password.
 
@@ -34,13 +49,14 @@ Interactive API docs: <http://localhost:8044/docs>
 ## Tests
 
 ```bash
-uv run pytest
+uv run pytest && (cd web && npm test)
 ```
 
-They run against the dev Postgres container, creating a `podarium_test` database beside it.
-Coverage is deliberately narrow: the invariants that are expensive to get wrong (refresh
-idempotency, `first_seen_at` stability, retention keeping rows, byte-range correctness,
-Podcast Index signing) rather than every endpoint.
+The Python tests run against the dev Postgres container, creating a `podarium_test`
+database beside it. Coverage is deliberately narrow on both sides: the invariants that are
+expensive to get wrong (refresh idempotency, `first_seen_at` stability, retention keeping
+rows, byte-range correctness, Podcast Index signing, show-note sanitising) rather than
+every endpoint and component.
 
 ## End-to-end check
 
@@ -54,12 +70,16 @@ compose file lives on the host. Read the comments at the top of it before deploy
 port, the NFS mount options, and the `PGDATA` path all have specific gotchas carried over
 from PinePods.
 
+The image builds the web UI in its own stage and serves it from `/app/web`, so there is
+one container and one port for both the API and the UI.
+
 ## Invariants
 
 Changes to this codebase should preserve these. Each has a test.
 
 - No client response carries a publisher URL. Artwork is `/api/images/...`, audio is
-  `/api/stream/...`.
+  `/api/stream/...`. Show notes are sanitised in the browser too: an `<img>` left in a
+  publisher's description would fetch straight from their CDN and leak the viewer's IP.
 - Retention deletes files, never episode rows.
 - `first_seen_at`, not `published_at`, decides whether an episode is new.
 - Feed refresh is idempotent.

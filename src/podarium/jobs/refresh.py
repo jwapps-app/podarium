@@ -163,7 +163,20 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         # ignore the rest, so one refresh cannot insert a duplicate and break the upsert.
         seen_this_pass: set[str] = set()
 
-        for parsed_episode in parsed.episodes:
+        # Insert oldest-first so ids ascend with publication date.
+        #
+        # Every episode of a newly subscribed feed gets the same first_seen_at, because
+        # they genuinely were all first seen in the same pass. Listings therefore fall
+        # through to the id tiebreak within that batch -- and feeds are published
+        # newest-first, so inserting in document order would number the newest episode
+        # lowest and stand the backlog on its head. Ordering the insert fixes the tiebreak
+        # at the source and keeps the listing cursor a simple (first_seen_at, id) pair.
+        in_publication_order = sorted(
+            parsed.episodes,
+            key=lambda item: item.published_at or datetime.min.replace(tzinfo=UTC),
+        )
+
+        for parsed_episode in in_publication_order:
             if parsed_episode.guid in seen_this_pass:
                 continue
             seen_this_pass.add(parsed_episode.guid)
