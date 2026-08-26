@@ -6,7 +6,7 @@ import { PLAYBACK_RATES, usePlayer } from "../lib/player";
 import { useFeeds, useQueue } from "../lib/queries";
 import type { Episode } from "../lib/types";
 import { Artwork } from "./Artwork";
-import { Back15Icon, Forward30Icon, PauseIcon, PlayIcon } from "./Icons";
+import { Back10Icon, ChevronUpIcon, Forward30Icon, PauseIcon, PlayIcon } from "./Icons";
 
 export function PlayerBar() {
   const player = usePlayer();
@@ -48,16 +48,32 @@ export function PlayerBar() {
   return (
     <div className="player" role="region" aria-label="Now playing">
       <div className="player-now">
-        <Artwork
-          className="player-art"
-          src={episode.image_url}
-          alt=""
-          fallbackText={feed?.title ?? episode.title}
-        />
+        {/* The artwork and title open the full view; the show name stays a link to the
+            feed, so both destinations are reachable from the bar. */}
+        <button
+          className="player-expand"
+          onClick={() => player.setExpanded(true)}
+          aria-label="Open now playing"
+          title="Open now playing"
+        >
+          <Artwork
+            className="player-art"
+            src={episode.image_url}
+            alt=""
+            fallbackText={feed?.title ?? episode.title}
+          />
+          <span className="player-expand-hint" aria-hidden="true">
+            <ChevronUpIcon />
+          </span>
+        </button>
         <div style={{ minWidth: 0 }}>
-          <div className="player-title" title={episode.title ?? ""}>
+          <button
+            className="player-title"
+            onClick={() => player.setExpanded(true)}
+            title={episode.title ?? ""}
+          >
             {episode.title ?? "Untitled episode"}
-          </div>
+          </button>
           <Link className="player-show" to={`/feeds/${episode.feed_id}`}>
             {feed?.title ?? "Unknown show"}
           </Link>
@@ -66,8 +82,8 @@ export function PlayerBar() {
 
       <div className="player-center">
         <div className="player-buttons">
-          <button className="btn-icon" onClick={() => player.skip(-15)} aria-label="Back 15 seconds" title="Back 15s">
-            <Back15Icon />
+          <button className="btn-icon" onClick={() => player.skip(-10)} aria-label="Back 10 seconds" title="Back 10 seconds">
+            <Back10Icon />
           </button>
           <button
             className="play-btn"
@@ -82,7 +98,7 @@ export function PlayerBar() {
               <PlayIcon />
             )}
           </button>
-          <button className="btn-icon" onClick={() => player.skip(30)} aria-label="Forward 30 seconds" title="Forward 30s">
+          <button className="btn-icon" onClick={() => player.skip(30)} aria-label="Forward 30 seconds" title="Forward 30 seconds">
             <Forward30Icon />
           </button>
         </div>
@@ -111,8 +127,8 @@ export function PlayerBar() {
         <button className="btn btn-sm rate-btn" onClick={cycleRate} title="Playback speed">
           {player.playbackRate}×
         </button>
-        <button className="btn btn-sm" onClick={player.stop} title="Close player">
-          Close
+        <button className="btn btn-sm" onClick={player.stop} title="Stop and close the player">
+          Stop
         </button>
       </div>
     </div>

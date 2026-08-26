@@ -35,12 +35,15 @@ interface PlayerValue {
   buffering: boolean;
   error: string | null;
   playbackRate: number;
+  /** Whether the full now-playing view is open over the page. */
+  expanded: boolean;
 
   play: (episode: Episode) => void;
   toggle: () => void;
   seek: (seconds: number) => void;
   skip: (delta: number) => void;
   setPlaybackRate: (rate: number) => void;
+  setExpanded: (open: boolean) => void;
   stop: () => void;
   /** Registered by the queue so the player can advance when an episode finishes. */
   setAdvanceHandler: (handler: (() => Episode | null) | null) => void;
@@ -59,6 +62,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [buffering, setBuffering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playbackRate, setPlaybackRateState] = useState(1);
+  const [expanded, setExpanded] = useState(false);
   // Set from the server default once, and only while the user has not overridden it in
   // this session -- a saved default should not yank the speed out from under someone who
   // has just adjusted it mid-episode.
@@ -202,6 +206,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setEpisode(null);
     setPlaying(false);
     setPosition(0);
+    setExpanded(false);
   }, [reportPosition]);
 
   const setAdvanceHandler = useCallback((handler: (() => Episode | null) | null) => {
@@ -310,16 +315,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       buffering,
       error,
       playbackRate,
+      expanded,
       play,
       toggle,
       seek,
       skip,
       setPlaybackRate,
+      setExpanded,
       stop,
       setAdvanceHandler,
     }),
     [
-      episode, playing, position, duration, buffering, error, playbackRate,
+      episode, playing, position, duration, buffering, error, playbackRate, expanded,
       play, toggle, seek, skip, setPlaybackRate, stop, setAdvanceHandler,
     ],
   );

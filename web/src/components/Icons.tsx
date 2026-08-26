@@ -39,12 +39,36 @@ export const PauseIcon = (p: Props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" {...p}><rect x="6" y="5" width="4" height="14" rx="1.2" /><rect x="14" y="5" width="4" height="14" rx="1.2" /></svg>
 );
 
-export const Back15Icon = (p: Props) => (
-  <svg {...base} {...p}><path d="M11 4 7 8l4 4" /><path d="M7 8h6a6 6 0 1 1-6 6" /></svg>
+/* The numeral is inside the icon: a bare circular arrow does not say how far it jumps,
+   and that is the one thing you need to know before pressing it. */
+export const Back10Icon = (p: Props) => (
+  <svg {...base} {...p}>
+    <path d="M11 3.5 7 7.5l4 4" />
+    <path d="M7 7.5h5.5a6.5 6.5 0 1 1-6.5 6.5" />
+    <text
+      x="12" y="17.4" textAnchor="middle" fontSize="7.5" fontWeight="700"
+      fill="currentColor" stroke="none" fontFamily="inherit"
+    >10</text>
+  </svg>
 );
 
 export const Forward30Icon = (p: Props) => (
-  <svg {...base} {...p}><path d="m13 4 4 4-4 4" /><path d="M17 8h-6a6 6 0 1 0 6 6" /></svg>
+  <svg {...base} {...p}>
+    <path d="m13 3.5 4 4-4 4" />
+    <path d="M17 7.5h-5.5a6.5 6.5 0 1 0 6.5 6.5" />
+    <text
+      x="12" y="17.4" textAnchor="middle" fontSize="7.5" fontWeight="700"
+      fill="currentColor" stroke="none" fontFamily="inherit"
+    >30</text>
+  </svg>
+);
+
+export const ChevronDownIcon = (p: Props) => (
+  <svg {...base} {...p}><path d="m6 9 6 6 6-6" /></svg>
+);
+
+export const ChevronUpIcon = (p: Props) => (
+  <svg {...base} {...p}><path d="m6 15 6-6 6 6" /></svg>
 );
 
 export const DownloadIcon = (p: Props) => (

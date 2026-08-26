@@ -11,6 +11,7 @@ import {
   SearchIcon,
   SettingsIcon,
 } from "./Icons";
+import { NowPlaying } from "./NowPlaying";
 import { PlayerBar } from "./PlayerBar";
 
 export function Layout() {
@@ -70,6 +71,7 @@ export function Layout() {
       </main>
 
       <PlayerBar />
+      <NowPlaying />
     </div>
   );
 }
