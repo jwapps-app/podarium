@@ -9,7 +9,7 @@ from podarium.auth import current_user
 from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
 from podarium.db import get_session
 from podarium.jobs.retention import purge_episode
-from podarium.models import Episode, EpisodeState, JobSource, User
+from podarium.models import Episode, EpisodeState, Feed, JobSource, User
 from podarium.schemas import EpisodeListOut, EpisodeOut, EpisodeStateUpdate, episode_out
 from podarium.services import enqueue_download
 
@@ -72,13 +72,21 @@ async def list_episodes(
 
     statement = (
         select(Episode, state, sort_key)
+        .join(Feed, Feed.id == Episode.feed_id)
         .outerjoin(state, (state.episode_id == Episode.id) & (state.user_id == user.id))
         .order_by(sort_key.desc(), Episode.id.desc())
         .limit(limit + 1)
     )
 
     if feed_id is not None:
+        # Asking for one show means you want that show, subscribed or not -- otherwise the
+        # library's Unsubscribed section would lead to an empty page.
         statement = statement.where(Episode.feed_id == feed_id)
+    else:
+        # A soft-unsubscribed show keeps its episodes and their played state, but it should
+        # not keep filling the inbox. Nothing is deleted; it is only hidden from the
+        # cross-show listing, and re-subscribing brings it straight back.
+        statement = statement.where(Feed.active.is_(True))
     if unplayed is True:
         statement = statement.where((state.played.is_(None)) | (state.played.is_(False)))
     elif unplayed is False:

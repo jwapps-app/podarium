@@ -132,3 +132,47 @@ async def test_paging_matches_the_sort_order(session, client):
 
     assert collected == [f"ep-{i:02d}" for i in range(12)]
     assert len(collected) == len(set(collected))
+
+
+# --- unsubscribed shows -------------------------------------------------------
+#
+# `active` is a soft unsubscribe: the show keeps its episodes and their played state, so
+# re-subscribing loses nothing. But it should stop filling the inbox, or unsubscribing
+# hides the show from the library while its episodes carry on arriving.
+
+
+async def test_the_inbox_hides_unsubscribed_shows(session, client):
+    kept = await _feed(session, "https://kept.example/f.xml", "Still subscribed")
+    dropped = await _feed(session, "https://gone.example/f.xml", "Unsubscribed")
+    dropped.active = False
+    await session.commit()
+
+    await _episode(session, kept, "kept-ep", published=NOW - timedelta(days=1), first_seen=NOW)
+    await _episode(session, dropped, "dropped-ep", published=NOW, first_seen=NOW)
+
+    assert await _titles(client) == ["kept-ep"]
+
+
+async def test_the_show_page_still_lists_them(session, client):
+    """Asking for one show means you want that show -- otherwise the library's
+    Unsubscribed section would lead to an empty page."""
+    dropped = await _feed(session, "https://gone.example/f.xml", "Unsubscribed")
+    dropped.active = False
+    await session.commit()
+    await _episode(session, dropped, "dropped-ep", published=NOW, first_seen=NOW)
+
+    assert await _titles(client, feed_id=dropped.id) == ["dropped-ep"]
+
+
+async def test_resubscribing_brings_them_back(session, client):
+    """Nothing was deleted, only hidden."""
+    feed = await _feed(session, "https://back.example/f.xml", "Returning")
+    feed.active = False
+    await session.commit()
+    await _episode(session, feed, "ep", published=NOW, first_seen=NOW)
+    assert await _titles(client) == []
+
+    feed.active = True
+    await session.commit()
+
+    assert await _titles(client) == ["ep"]
