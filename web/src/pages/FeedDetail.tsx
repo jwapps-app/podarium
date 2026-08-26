@@ -237,9 +237,10 @@ function FeedSettings({
             onChange={(event) => setAutoDownload(event.target.value)}
           />
           <div className="field-hint">
-            Blank follows the global default. 0 downloads nothing until you queue an
-            episode; any higher number keeps that many recent episodes on disk ahead of
-            time.
+            Blank follows the global default. Keeps exactly this many recent episodes on
+            disk — lowering it removes the excess, and 0 reclaims everything. Queued
+            episodes and hand-picked downloads are never removed, and a show set to keep
+            forever is left alone.
           </div>
         </div>
 

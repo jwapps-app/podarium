@@ -143,8 +143,9 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
         />
         <div className="field-hint">
           How many recent episodes to keep on disk for every show that does not set its
-          own. 0 downloads nothing until you queue an episode. Raising this starts
-          downloading straight away, so mind the disk on shows with long episodes.
+          own. This is a target, not a floor: lowering it removes the excess, and 0
+          reclaims everything auto-download fetched. Queued episodes and anything you
+          downloaded by hand are never removed. Mind the disk on shows with long episodes.
         </div>
       </div>
 

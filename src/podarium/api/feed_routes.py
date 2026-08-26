@@ -7,7 +7,7 @@ from podarium.auth import current_user
 from podarium.clients import podcastindex
 from podarium.clients.podcastindex import PodcastIndexUnavailable
 from podarium.db import get_session
-from podarium.jobs.refresh import enqueue_auto_downloads, refresh_feed
+from podarium.jobs.refresh import apply_auto_download_window, refresh_feed
 from podarium.jobs.retention import purge_episode
 from podarium.models import Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import FeedCreateRequest, FeedOut, FeedUpdateRequest, feed_out
@@ -197,7 +197,7 @@ async def update_feed(
         body.auto_download_count is not None or body.clear_auto_download_count
     )
     if touched_auto_download:
-        await enqueue_auto_downloads(session, feed)
+        await apply_auto_download_window(session, feed)
         await session.commit()
 
     await session.refresh(feed)

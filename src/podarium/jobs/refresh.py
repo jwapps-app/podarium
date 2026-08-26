@@ -19,16 +19,25 @@ import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.clients.feedfetch import ParsedEpisode, fetch_feed
 from podarium.db import get_sessionmaker
 from podarium.jobs.artwork import ensure_feed_artwork
 from podarium.metrics import episodes_discovered_total, feed_refresh_total
-from podarium.models import Episode, Feed, JobSource
+from podarium.jobs.retention import purge_episode
+from podarium.models import (
+    DownloadJob,
+    Episode,
+    Feed,
+    JobSource,
+    QueueItem,
+    RetentionMode,
+)
 from podarium.services import (
     effective_auto_download_count,
+    effective_retention,
     enqueue_download,
     get_app_settings,
 )
@@ -79,30 +88,107 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
     return changed
 
 
-async def enqueue_auto_downloads(session: AsyncSession, feed: Feed) -> None:
-    """Pre-download the N newest episodes for a feed that opted in.
+async def _window_episode_ids(session: AsyncSession, feed: Feed, count: int) -> list[int]:
+    """The newest ``count`` episodes that auto-download is responsible for.
 
-    N is the feed's own setting, or the global default when the feed inherits.
+    Purged episodes are excluded so that retention deleting something recent is not
+    immediately undone by the next refresh re-downloading it.
+    """
+    if count <= 0:
+        return []
+    return list(
+        (
+            await session.execute(
+                select(Episode.id)
+                .where(Episode.feed_id == feed.id)
+                .where(Episode.purged_at.is_(None))
+                .where(Episode.enclosure_url.is_not(None))
+                .order_by(Episode.published_at.desc().nullslast(), Episode.id.desc())
+                .limit(count)
+            )
+        ).scalars()
+    )
 
-    ``purged_at IS NULL`` matters: without it, retention deleting a recent episode would
-    be immediately undone by the next refresh re-enqueueing it.
+
+async def _protected_episode_ids(session: AsyncSession, feed: Feed) -> set[int]:
+    """Downloads that auto-download must not remove, whatever the window says.
+
+    Two kinds. Anything in the queue -- the same rule retention follows, and the reason a
+    queued episode survives a sweep. And anything you asked for yourself: a download you
+    started by hand, or that a queue insert started for you, is not auto-download's to take
+    back just because a newer episode pushed it out of the window.
+    """
+    queued = set(
+        (await session.execute(select(QueueItem.episode_id))).scalars()
+    )
+
+    requested = set(
+        (
+            await session.execute(
+                select(DownloadJob.episode_id)
+                .join(Episode, Episode.id == DownloadJob.episode_id)
+                .where(Episode.feed_id == feed.id)
+                .where(DownloadJob.source != JobSource.auto)
+            )
+        ).scalars()
+    )
+
+    return queued | requested
+
+
+async def apply_auto_download_window(session: AsyncSession, feed: Feed) -> None:
+    """Bring a feed's downloads in line with its auto-download setting.
+
+    The setting describes a target, not a floor: "keep the 3 newest" means three, so this
+    both fetches what is missing and removes what has fallen out of the window. Without the
+    removal half, lowering the number -- or setting it to 0 to reclaim space -- would
+    silently do nothing, and every new episode would grow the directory forever.
+
+    Runs on every refresh, not only when the setting changes, so the window stays true as
+    new episodes push old ones out of it.
     """
     app_settings = await get_app_settings(session)
     count = effective_auto_download_count(feed, app_settings)
+
+    window = await _window_episode_ids(session, feed, count)
+    window_ids = set(window)
+
+    mode, _ = effective_retention(feed, app_settings)
+    if mode is not RetentionMode.never:
+        # "Keep forever" is an explicit instruction not to delete, and it wins. A feed set
+        # that way is bounded by the global disk ceiling instead.
+        protected = await _protected_episode_ids(session, feed)
+
+        stale = (
+            await session.execute(
+                select(Episode)
+                .where(Episode.feed_id == feed.id)
+                .where(Episode.local_path.is_not(None))
+                .where(Episode.id.not_in(window_ids) if window_ids else true())
+            )
+        ).scalars().all()
+
+        for episode in stale:
+            if episode.id in protected:
+                continue
+            if await purge_episode(session, episode, reason="window"):
+                log.info(
+                    "auto-download trimmed episode %s from feed %s (outside newest %s)",
+                    episode.id,
+                    feed.id,
+                    count,
+                )
+
     if count <= 0:
         return
-    candidates = (
+
+    for episode in (
         await session.execute(
             select(Episode)
-            .where(Episode.feed_id == feed.id)
+            .where(Episode.id.in_(window_ids))
             .where(Episode.local_path.is_(None))
-            .where(Episode.purged_at.is_(None))
-            .where(Episode.enclosure_url.is_not(None))
-            .order_by(Episode.published_at.desc().nullslast(), Episode.id.desc())
-            .limit(count)
         )
-    ).scalars().all()
-    for episode in candidates:
+    ).scalars():
         await enqueue_download(session, episode, JobSource.auto)
 
 
@@ -138,7 +224,7 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         # Auto-download still runs on an unchanged feed. The trigger for pre-downloading is
         # the setting, not new content: a feed the user just opted in to would otherwise
         # wait for its next episode before anything landed on disk.
-        await enqueue_auto_downloads(session, feed)
+        await apply_auto_download_window(session, feed)
         await session.commit()
         feed_refresh_total.labels(result="not_modified").inc()
         return outcome
@@ -206,7 +292,7 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
                 outcome.updated_episodes += 1
 
         await session.flush()
-        await enqueue_auto_downloads(session, feed)
+        await apply_auto_download_window(session, feed)
 
     await session.commit()
 

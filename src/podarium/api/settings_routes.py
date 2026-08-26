@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.auth import current_user
 from podarium.db import get_session
-from podarium.jobs.refresh import enqueue_auto_downloads
+from podarium.jobs.refresh import apply_auto_download_window
 from podarium.models import Feed, User
 from podarium.schemas import SettingsOut, SettingsUpdate
 from podarium.services import get_app_settings
@@ -60,10 +60,13 @@ async def update_settings(
 
     await session.commit()
 
-    # Same reasoning as the per-feed setting: raising the global has to do something now.
+    # Same reasoning as the per-feed setting: changing the global has to do something now.
     # Otherwise every inheriting feed sits with the value saved and nothing on disk until
     # its next scheduled refresh, which looks exactly like the setting not working.
-    if body.global_auto_download_count is not None and row.global_auto_download_count > 0:
+    #
+    # Any change, not just an increase: lowering it -- or setting it to 0 to reclaim disk --
+    # is the case where waiting an hour is most obviously wrong.
+    if body.global_auto_download_count is not None:
         inheriting = (
             await session.execute(
                 select(Feed)
@@ -72,7 +75,7 @@ async def update_settings(
             )
         ).scalars().all()
         for feed in inheriting:
-            await enqueue_auto_downloads(session, feed)
+            await apply_auto_download_window(session, feed)
         await session.commit()
 
     await session.refresh(row)

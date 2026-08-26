@@ -20,7 +20,7 @@ downloaded_bytes_total = Counter(
 
 purged_total = Counter(
     "podarium_purged_total", "Episode files removed by retention", ["reason"]
-)  # reason: policy | ceiling | manual
+)  # reason: policy | ceiling | manual | window
 
 download_queue_depth = Gauge(
     "podarium_download_queue_depth", "Download jobs in queued or running state"
