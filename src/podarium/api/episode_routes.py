@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
@@ -16,6 +16,35 @@ from podarium.services import enqueue_download
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
 
+# How far behind a write may be before it is treated as overtaken rather than concurrent.
+#
+# Devices do not agree on the time to the second, and a phone running a little slow would
+# otherwise have perfectly ordinary writes declined the moment anything else touched the
+# same episode. The case worth catching is an offline flush that is hours old, so the
+# tolerance can be generous: inside a minute, arrival order decides, which is what happened
+# before this existed and is fine for two devices one person is holding.
+CONCURRENT_WRITE_TOLERANCE = timedelta(seconds=60)
+
+
+def _is_stale(changed_at: datetime | None, stored_at: datetime | None) -> bool:
+    """Whether a write describes a moment that has already been overtaken.
+
+    A write with no timestamp is taken as happening now, which keeps existing clients
+    working unchanged. A timestamp in the future is clamped to now rather than trusted:
+    a device with a fast clock would otherwise win every conflict it ever had.
+    """
+    if changed_at is None or stored_at is None:
+        return False
+
+    if changed_at.tzinfo is None:
+        changed_at = changed_at.replace(tzinfo=UTC)
+    if stored_at.tzinfo is None:
+        stored_at = stored_at.replace(tzinfo=UTC)
+
+    changed_at = min(changed_at, datetime.now(UTC))
+    return changed_at < stored_at - CONCURRENT_WRITE_TOLERANCE
+
+
 async def _get_episode_or_404(session: AsyncSession, episode_id: int) -> Episode:
     episode = await session.get(Episode, episode_id)
     if episode is None:
@@ -23,13 +52,21 @@ async def _get_episode_or_404(session: AsyncSession, episode_id: int) -> Episode
     return episode
 
 
-async def _get_or_create_state(session: AsyncSession, user_id: int, episode_id: int) -> EpisodeState:
+async def _get_or_create_state(
+    session: AsyncSession, user_id: int, episode_id: int
+) -> tuple[EpisodeState, bool]:
+    """Return the state row and whether it already existed.
+
+    The caller needs to know: a row that did not exist cannot be stale, so a first write
+    always applies whatever timestamp it carries.
+    """
     state = await session.get(EpisodeState, {"user_id": user_id, "episode_id": episode_id})
-    if state is None:
-        state = EpisodeState(user_id=user_id, episode_id=episode_id)
-        session.add(state)
-        await session.flush()
-    return state
+    if state is not None:
+        return state, True
+    state = EpisodeState(user_id=user_id, episode_id=episode_id)
+    session.add(state)
+    await session.flush()
+    return state, False
 
 
 @router.get("", response_model=EpisodeListOut)
@@ -167,7 +204,13 @@ async def update_state(
     session: AsyncSession = Depends(get_session),
 ) -> EpisodeOut:
     episode = await _get_episode_or_404(session, episode_id)
-    state = await _get_or_create_state(session, user.id, episode_id)
+    state, existed = await _get_or_create_state(session, user.id, episode_id)
+
+    if existed and _is_stale(body.changed_at, state.updated_at):
+        # Older than what is already stored, so it describes a moment that has since been
+        # overtaken. Returning the current state rather than an error lets the client
+        # correct its own copy from the reply instead of handling a failure path.
+        return episode_out(episode, state)
 
     if body.played is not None:
         # completed_at is what after_played retention measures from, so it is stamped on

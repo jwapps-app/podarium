@@ -145,6 +145,13 @@ class EpisodeStateUpdate(BaseModel):
     played: bool | None = None
     position_seconds: int | None = Field(default=None, ge=0)
     starred: bool | None = None
+    # When the change was actually made, as opposed to when it arrived.
+    #
+    # A client that queues writes while offline flushes them later, so arrival order stops
+    # meaning anything: an hours-old position would otherwise land after, and overwrite,
+    # something newer done elsewhere. Sending this makes the write lose that argument
+    # instead of winning it. Omit it and the write is treated as happening now.
+    changed_at: datetime | None = None
 
 
 class QueueItemOut(BaseModel):

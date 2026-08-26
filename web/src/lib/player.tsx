@@ -310,9 +310,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // fetch() is cancelled on unload; sendBeacon is the only reliable last write.
       navigator.sendBeacon?.(
         `/api/episodes/${current.id}/state`,
-        new Blob([JSON.stringify({ position_seconds: Math.floor(audio.currentTime) })], {
-          type: "application/json",
-        }),
+        new Blob(
+          [
+            JSON.stringify({
+              position_seconds: Math.floor(audio.currentTime),
+              // A beacon is queued by the browser and sent whenever it manages to; without
+              // this it would arrive undated and overwrite whatever happened in between.
+              changed_at: new Date().toISOString(),
+            }),
+          ],
+          { type: "application/json" },
+        ),
       );
     };
     window.addEventListener("pagehide", onUnload);

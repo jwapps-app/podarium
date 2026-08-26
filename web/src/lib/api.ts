@@ -177,7 +177,14 @@ export const api = {
   setState: (
     id: number,
     body: { played?: boolean; position_seconds?: number; starred?: boolean },
-  ) => request<Episode>(`/api/episodes/${id}/state`, { method: "PUT", body: JSON.stringify(body) }),
+  ) =>
+    request<Episode>(`/api/episodes/${id}/state`, {
+      method: "PUT",
+      // Stamped with when the change was made, not when it arrives. The pagehide beacon
+      // below is the browser's own version of an offline flush: it can land well after the
+      // tab is gone, by which time another device may have moved on.
+      body: JSON.stringify({ ...body, changed_at: new Date().toISOString() }),
+    }),
 
   // -- queue ----------------------------------------------------------------
   queue: () => request<QueueItem[]>("/api/queue"),
