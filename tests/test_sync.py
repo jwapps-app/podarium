@@ -204,3 +204,19 @@ async def test_the_cursor_comes_from_the_database_clock(session, client):
     # Same clock means the two readings are essentially the same instant, whatever the
     # host's clock happens to say.
     assert abs((db_now - reported).total_seconds()) < 2
+
+
+async def test_bootstrap_says_so_when_it_skips(session, caplog):
+    """A silent skip is a dead end: the server starts, serves a login page, and no
+    credentials work, with nothing in the log saying why."""
+    import logging
+
+    from podarium.auth import bootstrap_user
+    from podarium.config import Settings
+
+    settings = Settings(podarium_username=None, podarium_password=None)
+
+    with caplog.at_level(logging.WARNING):
+        await bootstrap_user(session, settings)
+
+    assert any("no account was created" in r.message for r in caplog.records)

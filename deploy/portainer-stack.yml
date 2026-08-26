@@ -21,11 +21,12 @@
 #
 #         DB_PASSWORD          openssl rand -hex 32
 #         SECRET_KEY           openssl rand -hex 32
+#         LOGIN_USERNAME       the account to create on first boot
 #         LOGIN_PASSWORD       what you will type to sign in
 #         PODCASTINDEX_KEY     from your local .env -- optional
 #         PODCASTINDEX_SECRET  from your local .env -- optional
 #
-#     The three with :? are required and fail the deploy loudly if unset. Leaving the
+#     The four with :? are required and fail the deploy loudly if unset. Leaving the
 #     Podcast Index pair out is fine: search returns a clean 503 and the UI says so, while
 #     subscribing by feed URL, refresh, downloads, retention and playback all still work.
 #
@@ -102,7 +103,7 @@ services:
       # Applied only on first boot, while the users table is empty. Leaving them here
       # afterwards is harmless; they are ignored once the account exists, so a restart
       # cannot reset your password.
-      PODARIUM_USERNAME: jworthington
+      PODARIUM_USERNAME: ${LOGIN_USERNAME:?set LOGIN_USERNAME in the environment variables panel}
       PODARIUM_PASSWORD: ${LOGIN_PASSWORD:?set LOGIN_PASSWORD in the environment variables panel}
 
       # Free from podcastindex.org; copy from your local .env. Discovery only. Without

@@ -8,6 +8,7 @@ The web UI carries a signed session cookie; non-browser clients carry a bearer t
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 
 from argon2 import PasswordHasher
@@ -20,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from podarium.config import Settings, get_settings
 from podarium.db import get_session
 from podarium.models import ApiToken, User
+
+log = logging.getLogger(__name__)
 
 _hasher = PasswordHasher()
 
@@ -124,6 +127,12 @@ async def bootstrap_user(session: AsyncSession, settings: Settings) -> None:
     if existing:
         return
     if not settings.podarium_username or not settings.podarium_password:
+        # Worth a line in the log. Without one this is a silent dead end: the server starts
+        # cleanly, serves a login page, and no credentials work, with nothing saying why.
+        log.warning(
+            "No user exists and PODARIUM_USERNAME/PODARIUM_PASSWORD are not both set, "
+            "so no account was created. Set them and restart."
+        )
         return
     session.add(
         User(
