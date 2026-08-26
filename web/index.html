@@ -5,6 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
     <title>Podarium</title>
+
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0e1116" />
+
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <!-- iOS ignores manifest icons for the home screen and reads this instead, and it will
+         not accept SVG -- hence the rendered PNG. -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- Older iOS predates display:standalone in the manifest and still needs this to open
+         without Safari's chrome. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Podarium" />
+    <!-- "black", not "black-translucent": translucent puts the page under the status bar,
+         and the layout has no top safe-area inset to keep the header clear of it. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
   </head>
   <body>
     <div id="root"></div>

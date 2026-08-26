@@ -47,16 +47,43 @@ FEED_ID="$(api -X POST "$BASE/api/feeds" -H 'content-type: application/json' \
   -d "{\"feed_url\":\"$FEED\"}" | json 'd["id"]')"
 pass "subscribed to feed $FEED_ID"
 
-COUNT_1="$(api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" | json 'len(d["items"])')"
+api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" > "$TMP/before.json"
+COUNT_1="$(python3 -c "import json;print(len(json.load(open('$TMP/before.json'))['items']))")"
 [ "$COUNT_1" -gt 0 ] || fail "no episodes parsed"
 pass "$COUNT_1 episodes parsed"
 
 step "refresh is idempotent"
 api -X POST "$BASE/api/feeds/$FEED_ID/refresh" >/dev/null
 api -X POST "$BASE/api/feeds/$FEED_ID/refresh" >/dev/null
-COUNT_2="$(api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" | json 'len(d["items"])')"
-[ "$COUNT_1" = "$COUNT_2" ] || fail "episode count changed after refresh ($COUNT_1 -> $COUNT_2)"
-pass "two refreshes added no rows"
+api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" > "$TMP/after.json"
+
+# Compared as a set, not a count. The default feed is an hourly news bulletin, so a genuinely
+# new episode can land mid-run -- that is the feed working, not a broken refresh. What
+# idempotency actually claims is narrower: refreshing re-adds nothing and loses nothing.
+python3 - "$TMP/before.json" "$TMP/after.json" <<'PY' || exit 1
+import json, sys
+before = json.load(open(sys.argv[1]))["items"]
+after = json.load(open(sys.argv[2]))["items"]
+
+guids = [e["guid"] for e in after]
+if len(guids) != len(set(guids)):
+    sys.exit("  FAIL refresh created duplicate GUIDs")
+
+lost = {e["id"] for e in before} - {e["id"] for e in after}
+if lost:
+    sys.exit(f"  FAIL refresh dropped {len(lost)} episodes")
+
+# first_seen_at is what "is this new?" is built on, so it must survive a refresh untouched.
+seen = {e["id"]: e["first_seen_at"] for e in after}
+moved = [e["id"] for e in before if seen.get(e["id"]) != e["first_seen_at"]]
+if moved:
+    sys.exit(f"  FAIL refresh moved first_seen_at on {len(moved)} episodes")
+
+arrived = len(after) - len(before)
+if arrived:
+    print(f"  ..   {arrived} genuinely new episode(s) arrived mid-run; not counted against idempotency")
+PY
+pass "two refreshes re-added nothing and lost nothing"
 
 step "no publisher URLs in responses"
 api "$BASE/api/episodes?feed_id=$FEED_ID&limit=200" > "$TMP/eps.json"

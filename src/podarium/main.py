@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -116,6 +117,12 @@ for module in (
     app.include_router(module.router)
 
 
+# Registered explicitly rather than relying on the host's mime map. macOS knows this
+# extension; the slim Debian image the container is built from may not, and a manifest
+# served as octet-stream is ignored, which would quietly cost the home-screen install.
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+
+
 # The built web UI, when one is present.
 #
 # Order matters: this block runs after every API router is registered, so /api, /healthz
@@ -129,7 +136,10 @@ if _web_root.is_dir() and (_web_root / "index.html").is_file():
         # Hashed filenames, so these can be cached hard.
         app.mount("/assets", StaticFiles(directory=str(_web_root / "assets")), name="assets")
 
-    @app.get("/{path:path}", include_in_schema=False)
+    # HEAD as well as GET. FastAPI, unlike a plain Starlette route, does not add HEAD
+    # alongside GET, and a static asset answering a HEAD probe with 405 is simply wrong --
+    # link checkers and some proxies ask that way.
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def serve_spa(path: str) -> Response:
         """History fallback for the single-page app.
 

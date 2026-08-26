@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Opaque, full-bleed: iOS composites apple-touch-icon on black and applies its own
+       rounded-rect mask, so transparency here would show as hard black corners. -->
+  <rect width="512" height="512" fill="#12161c"/>
+  <!-- The brand mark from Icons.tsx, centred and scaled to ~48% of the canvas, which keeps
+       it inside the 80% safe zone Android's maskable icons crop to. -->
+  <g transform="translate(256 256) scale(15) translate(-12 -12.75)"
+     fill="none" stroke="#e9a13b" stroke-width="1.9"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 14.5a3 3 0 0 0 3-3v-4a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3z"/>
+    <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"/>
+    <path d="M12 17v4"/>
+    <path d="M8.5 21h7"/>
+  </g>
+</svg>
