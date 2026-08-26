@@ -79,13 +79,14 @@ async def list_episodes(
     )
 
     if feed_id is not None:
-        # Asking for one show means you want that show, subscribed or not -- otherwise the
-        # library's Unsubscribed section would lead to an empty page.
         statement = statement.where(Episode.feed_id == feed_id)
-    else:
-        # A soft-unsubscribed show keeps its episodes and their played state, but it should
-        # not keep filling the inbox. Nothing is deleted; it is only hidden from the
-        # cross-show listing, and re-subscribing brings it straight back.
+
+    # Unsubscribed shows drop out of the general browse, but not out of anything you asked
+    # for specifically. A show requested by id, or an episode you starred, is an explicit
+    # choice and is returned whatever the subscription state -- otherwise the library's
+    # Unsubscribed section would lead to an empty page, and unsubscribing would silently
+    # empty your starred list.
+    if feed_id is None and starred is not True:
         statement = statement.where(Feed.active.is_(True))
     if unplayed is True:
         statement = statement.where((state.played.is_(None)) | (state.played.is_(False)))

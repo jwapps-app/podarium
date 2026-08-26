@@ -11,6 +11,7 @@ import { LoginPage } from "./pages/Login";
 import { QueuePage } from "./pages/Queue";
 import { SearchPage } from "./pages/Search";
 import { SettingsPage } from "./pages/Settings";
+import { StarredPage } from "./pages/Starred";
 
 export function App() {
   const { user, loading } = useAuth();
@@ -25,6 +26,7 @@ export function App() {
           <Route element={<Layout />}>
             <Route index element={<LibraryPage />} />
             <Route path="inbox" element={<InboxPage />} />
+            <Route path="starred" element={<StarredPage />} />
             <Route path="queue" element={<QueuePage />} />
             <Route path="search" element={<SearchPage />} />
             <Route path="settings" element={<SettingsPage />} />

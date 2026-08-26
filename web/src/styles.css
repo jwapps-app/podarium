@@ -987,7 +987,7 @@ button.player-title:hover { color: var(--accent); }
     z-index: 30;
   }
 
-  .brand, .nav-spacer, .nav-count { display: none; }
+  .brand, .nav-spacer, .nav-count, .nav-desktop-only { display: none; }
 
   .nav-link { flex-direction: column; gap: 3px; font-size: 10.5px; padding: 6px 8px; }
 

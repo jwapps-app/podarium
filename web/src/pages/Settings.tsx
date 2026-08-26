@@ -6,6 +6,7 @@ import { TrashIcon } from "../components/Icons";
 import { api } from "../lib/api";
 import { formatBytes, formatRelativeExact } from "../lib/format";
 import { PLAYBACK_RATES } from "../lib/player";
+import { useAuth } from "../lib/auth";
 import { useSettings } from "../lib/queries";
 import type { CreatedApiToken, OpmlImportResult, RetentionMode } from "../lib/types";
 
@@ -38,7 +39,24 @@ export function SettingsPage() {
       />
       <OpmlPanel />
       <TokensPanel />
+      <AccountPanel />
     </>
+  );
+}
+
+function AccountPanel() {
+  const { user, logout } = useAuth();
+
+  return (
+    <div className="panel">
+      <div className="panel-title">Account</div>
+      <p className="panel-hint">
+        Signed in as {user?.username ?? "unknown"}.
+      </p>
+      <button className="btn" onClick={() => void logout()}>
+        Sign out
+      </button>
+    </div>
   );
 }
 

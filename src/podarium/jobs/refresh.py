@@ -30,6 +30,7 @@ from podarium.jobs.retention import purge_episode
 from podarium.models import (
     DownloadJob,
     Episode,
+    EpisodeState,
     Feed,
     JobSource,
     QueueItem,
@@ -113,13 +114,21 @@ async def _window_episode_ids(session: AsyncSession, feed: Feed, count: int) -> 
 async def _protected_episode_ids(session: AsyncSession, feed: Feed) -> set[int]:
     """Downloads that auto-download must not remove, whatever the window says.
 
-    Two kinds. Anything in the queue -- the same rule retention follows, and the reason a
-    queued episode survives a sweep. And anything you asked for yourself: a download you
-    started by hand, or that a queue insert started for you, is not auto-download's to take
-    back just because a newer episode pushed it out of the window.
+    Anything in the queue or starred, the same rule retention follows. And anything you
+    asked for yourself: a download you started by hand, or that a queue insert started for
+    you, is not auto-download's to take back just because a newer episode pushed it out of
+    the window.
     """
     queued = set(
         (await session.execute(select(QueueItem.episode_id))).scalars()
+    )
+
+    starred = set(
+        (
+            await session.execute(
+                select(EpisodeState.episode_id).where(EpisodeState.starred.is_(True))
+            )
+        ).scalars()
     )
 
     requested = set(
@@ -133,7 +142,7 @@ async def _protected_episode_ids(session: AsyncSession, feed: Feed) -> set[int]:
         ).scalars()
     )
 
-    return queued | requested
+    return queued | starred | requested
 
 
 async def apply_auto_download_window(session: AsyncSession, feed: Feed) -> None:

@@ -5,13 +5,12 @@ import { Empty, ErrorNotice, Loading } from "../components/Loading";
 import { isNewArrival } from "../lib/newness";
 import { useEpisodes, useFeedActions, useFeeds, useQueue } from "../lib/queries";
 
-type Filter = "all" | "unplayed" | "downloaded" | "starred";
+type Filter = "all" | "unplayed" | "downloaded";
 
 const FILTERS: { key: Filter; label: string }[] = [
   { key: "unplayed", label: "Unplayed" },
   { key: "all", label: "All" },
   { key: "downloaded", label: "Downloaded" },
-  { key: "starred", label: "Starred" },
 ];
 
 export function InboxPage() {
@@ -21,7 +20,6 @@ export function InboxPage() {
     limit: 100,
     unplayed: filter === "unplayed" ? true : undefined,
     downloaded: filter === "downloaded" ? true : undefined,
-    starred: filter === "starred" ? true : undefined,
   });
   const { data: feeds } = useFeeds();
   const { data: queue } = useQueue();

@@ -195,3 +195,77 @@ async def test_disk_ceiling_purges_played_first(session, user):
         if e.local_path is not None
     )
     assert remaining * 1000 <= 1500
+
+
+# --- starring -----------------------------------------------------------------
+#
+# A star that let the audio be deleted underneath it would be a bookmark pretending to be a
+# promise. It is an explicit "keep this", and it outranks the policy the same way the queue
+# does.
+
+
+async def test_a_starred_episode_survives_policy_expiry(session, user):
+    feed, episode = await _downloaded_episode(session)
+    settings_row = await get_app_settings(session)
+    settings_row.global_retention_mode = RetentionMode.after_download
+    settings_row.global_retention_days = 1
+    session.add(EpisodeState(user_id=user.id, episode_id=episode.id, starred=True))
+    await session.commit()
+
+    assert await sweep(session) == 0
+
+    await session.refresh(episode)
+    assert episode.local_path is not None
+
+
+async def test_a_starred_episode_survives_after_played(session, user):
+    feed, episode = await _downloaded_episode(session)
+    settings_row = await get_app_settings(session)
+    settings_row.global_retention_mode = RetentionMode.after_played
+    settings_row.global_retention_days = 7
+    session.add(
+        EpisodeState(
+            user_id=user.id,
+            episode_id=episode.id,
+            played=True,
+            starred=True,
+            completed_at=datetime.now(UTC) - timedelta(days=30),
+        )
+    )
+    await session.commit()
+
+    assert await sweep(session) == 0
+    await session.refresh(episode)
+    assert episode.local_path is not None
+
+
+async def test_a_starred_episode_survives_the_disk_ceiling(session, user):
+    """Being over the ceiling does not override an explicit "keep this"."""
+    feed, episode = await _downloaded_episode(session, size=5000)
+    settings_row = await get_app_settings(session)
+    settings_row.global_retention_mode = RetentionMode.never
+    settings_row.download_dir_max_bytes = 100
+    session.add(EpisodeState(user_id=user.id, episode_id=episode.id, starred=True))
+    await session.commit()
+
+    assert await sweep(session) == 0
+    await session.refresh(episode)
+    assert episode.local_path is not None
+
+
+async def test_unstarring_returns_it_to_the_policy(session, user):
+    feed, episode = await _downloaded_episode(session)
+    settings_row = await get_app_settings(session)
+    settings_row.global_retention_mode = RetentionMode.after_download
+    settings_row.global_retention_days = 1
+    state = EpisodeState(user_id=user.id, episode_id=episode.id, starred=True)
+    session.add(state)
+    await session.commit()
+    assert await sweep(session) == 0
+
+    state.starred = False
+    await session.commit()
+
+    assert await sweep(session) == 1
+    await session.refresh(episode)
+    assert episode.local_path is None

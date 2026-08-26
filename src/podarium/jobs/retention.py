@@ -50,10 +50,26 @@ async def purge_episode(session: AsyncSession, episode: Episode, *, reason: str 
     return True
 
 
-async def _queued_episode_ids(session: AsyncSession) -> set[int]:
-    """Episodes currently in the queue are never purged, whatever the policy says."""
-    rows = (await session.execute(select(QueueItem.episode_id))).scalars().all()
-    return set(rows)
+async def _protected_episode_ids(session: AsyncSession) -> set[int]:
+    """Episodes no policy may purge, whatever the dates say.
+
+    Two kinds, and both are an explicit instruction rather than an inference. Anything in
+    the queue, because you have lined it up to listen to. And anything starred: a star that
+    let the audio be deleted underneath it would be a bookmark pretending to be a promise.
+
+    A large enough starred collection can therefore hold the directory above its ceiling.
+    That is the correct outcome -- the ceiling is a policy for episodes nobody asked to
+    keep, and it should not quietly delete the ones somebody did.
+    """
+    queued = set((await session.execute(select(QueueItem.episode_id))).scalars())
+    starred = set(
+        (
+            await session.execute(
+                select(EpisodeState.episode_id).where(EpisodeState.starred.is_(True))
+            )
+        ).scalars()
+    )
+    return queued | starred
 
 
 def _is_expired(
@@ -83,7 +99,7 @@ async def sweep(session: AsyncSession) -> int:
     """One retention pass. Returns the number of files purged."""
     app_settings = await get_app_settings(session)
     now = datetime.now(UTC)
-    protected = await _queued_episode_ids(session)
+    protected = await _protected_episode_ids(session)
 
     rows = (
         await session.execute(
@@ -109,7 +125,8 @@ async def sweep(session: AsyncSession) -> int:
             survivors.append((episode, state))
 
     # Global disk ceiling. Played episodes go first, then the oldest downloads, until the
-    # directory is back under the limit.
+    # directory is back under the limit. Queued and starred episodes are skipped here too:
+    # being over the ceiling does not override an explicit "keep this".
     ceiling = app_settings.download_dir_max_bytes
     if ceiling:
         total = sum(episode.local_bytes or 0 for episode, _ in survivors)

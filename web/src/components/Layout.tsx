@@ -10,6 +10,7 @@ import {
   QueueIcon,
   SearchIcon,
   SettingsIcon,
+  StarIcon,
 } from "./Icons";
 import { NowPlaying } from "./NowPlaying";
 import { PlayerBar } from "./PlayerBar";
@@ -50,6 +51,11 @@ export function Layout() {
           ) : null}
         </NavLink>
 
+        <NavLink to="/starred" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
+          <StarIcon />
+          Starred
+        </NavLink>
+
         <NavLink to="/queue" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           <QueueIcon />
           Queue
@@ -68,7 +74,14 @@ export function Layout() {
           Settings
         </NavLink>
 
-        <button className="nav-link" onClick={() => void logout()} style={{ border: "none", background: "none", width: "100%" }}>
+        {/* Desktop only. The phone's tab bar has no room for a seventh item, and signing
+            out is a rare action that should not sit under a thumb -- it lives on the
+            settings page there instead. */}
+        <button
+          className="nav-link nav-desktop-only"
+          onClick={() => void logout()}
+          style={{ border: "none", background: "none", width: "100%" }}
+        >
           <LogoutIcon />
           Sign out
         </button>

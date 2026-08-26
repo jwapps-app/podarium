@@ -16,7 +16,18 @@ FEED="${VERIFY_FEED_URL:-https://feeds.npr.org/500005/podcast.xml}"
 
 JAR="$(mktemp)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$JAR" "$TMP"' EXIT
+TOKEN_ID=""
+
+cleanup() {
+  # Revoke the device token this run created. Each one is a long-lived credential with
+  # full API access, so a script that mints one per run and walks away leaves a pile of
+  # live keys behind -- revoke before the cookie jar goes, since revoking needs it.
+  if [ -n "$TOKEN_ID" ]; then
+    curl -sS -b "$JAR" -X DELETE "$BASE/api/auth/token/$TOKEN_ID" -o /dev/null || true
+  fi
+  rm -rf "$JAR" "$TMP"
+}
+trap cleanup EXIT
 
 pass() { printf '  ok   %s\n' "$1"; }
 fail() { printf '  FAIL %s\n' "$1" >&2; exit 1; }
@@ -36,8 +47,10 @@ pass "unauthenticated requests are rejected"
 api -X POST "$BASE/api/auth/login" -H 'content-type: application/json' \
   -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}" >/dev/null || fail "login"
 pass "logged in as $USERNAME"
-TOKEN="$(api -X POST "$BASE/api/auth/token" -H 'content-type: application/json' \
-  -d '{"name":"verify"}' | json 'd["token"]')"
+api -X POST "$BASE/api/auth/token" -H 'content-type: application/json' \
+  -d '{"name":"verify"}' > "$TMP/token.json"
+TOKEN="$(python3 -c "import json;print(json.load(open('$TMP/token.json'))['token'])")"
+TOKEN_ID="$(python3 -c "import json;print(json.load(open('$TMP/token.json'))['id'])")"
 [ "$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $TOKEN" "$BASE/api/auth/me")" = 200 ] \
   || fail "bearer token"
 pass "bearer token works"

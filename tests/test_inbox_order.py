@@ -176,3 +176,17 @@ async def test_resubscribing_brings_them_back(session, client):
     await session.commit()
 
     assert await _titles(client) == ["ep"]
+
+
+async def test_starred_survives_unsubscribing(session, client):
+    """Starring is an explicit "keep this", so unsubscribing must not empty the list."""
+    from podarium.models import EpisodeState
+
+    feed = await _feed(session, "https://starred.example/f.xml", "Show")
+    episode = await _episode(session, feed, "kept", published=NOW, first_seen=NOW)
+    session.add(EpisodeState(user_id=1, episode_id=episode.id, starred=True))
+    feed.active = False
+    await session.commit()
+
+    assert await _titles(client) == [], "the general browse still hides it"
+    assert await _titles(client, starred="true") == ["kept"], "but the starred list keeps it"
