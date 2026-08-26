@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react";
 
 import { api } from "./api";
+import { useMediaSession } from "./mediaSession";
 import type { Episode } from "./types";
 
 /** How often a playing episode reports its position back to the server. Frequent enough
@@ -78,6 +79,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audioRef.current = new Audio();
     audioRef.current.preload = "metadata";
   }
+
+  // Put the element in the document. A detached Audio() plays, but iOS is unreliable about
+  // treating one as the page's media session -- background playback and the Now Playing
+  // controls both depend on it being a real element in the document.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio || audio.isConnected) return;
+    audio.setAttribute("aria-hidden", "true");
+    audio.style.display = "none";
+    document.body.appendChild(audio);
+    return () => {
+      audio.remove();
+    };
+  }, []);
 
   const reportPosition = useCallback(
     (seconds: number, options: { played?: boolean; force?: boolean } = {}) => {
@@ -305,6 +320,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   rateRef.current = playbackRate;
+
+  // The feed is only needed for the show name the lock screen shows as the artist.
+  const { data: feeds } = useQuery({ queryKey: ["feeds"], queryFn: api.feeds });
+  const showTitle =
+    feeds?.find((candidate) => candidate.id === episode?.feed_id)?.title ?? null;
+
+  useMediaSession({
+    episode,
+    showTitle,
+    playing,
+    position,
+    duration,
+    playbackRate,
+    toggle,
+    skip,
+    seek,
+    stop,
+  });
 
   const value = useMemo(
     () => ({
