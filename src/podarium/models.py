@@ -93,6 +93,12 @@ class Feed(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     feed_url: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+
+    # Where the feed actually serves from, after redirects. A show is commonly reachable
+    # at both its hosting platform's URL and the publisher's own, and the two are the same
+    # subscription -- so identity needs the destination, not just the address we were given.
+    resolved_url: Mapped[str | None] = mapped_column(Text)
+
     podcast_index_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
 
     title: Mapped[str | None] = mapped_column(Text)

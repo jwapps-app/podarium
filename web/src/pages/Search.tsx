@@ -148,9 +148,8 @@ export function SearchPage() {
             <div className="episode-list">
               {results.map((result) => (
                 <article className="episode" key={result.feed_url}>
-                  {/* Search artwork is the one image that is still a publisher URL: at this
-                      point the show is not subscribed, so there is nothing for the server
-                      to have cached yet. */}
+                  {/* Server-proxied, like every other image here. Search results would
+                      otherwise have the browser fetch from each publisher's CDN. */}
                   <Artwork
                     className="episode-art"
                     src={result.image_url}

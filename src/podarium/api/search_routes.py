@@ -8,15 +8,51 @@ from podarium.clients import podcastindex
 from podarium.clients.feedfetch import fetch_feed
 from podarium.clients.podcastindex import PodcastIndexUnavailable
 from podarium.db import get_session
+from podarium.jobs.artwork import register_artwork
 from podarium.models import Feed, User
 from podarium.schemas import SearchResultOut
 from podarium.services import get_app_settings
+from podarium.urls import normalize_feed_url
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
 
-async def _subscribed_urls(session: AsyncSession) -> set[str]:
-    return set((await session.execute(select(Feed.feed_url))).scalars().all())
+async def _subscribed_index(session: AsyncSession) -> tuple[set[str], set[int]]:
+    """Normalised URLs and Podcast Index ids for everything already subscribed.
+
+    Both are needed: Podcast Index reports a show's canonical URL, which is often not the
+    hosting-platform URL a user originally subscribed with, so comparing raw strings marks
+    shows you already have as available to add.
+    """
+    rows = (
+        await session.execute(
+            select(Feed.feed_url, Feed.resolved_url, Feed.podcast_index_id)
+        )
+    ).all()
+    urls = {normalize_feed_url(url) for url, _, _ in rows}
+    urls |= {normalize_feed_url(resolved) for _, resolved, _ in rows if resolved}
+    ids = {index_id for _, _, index_id in rows if index_id is not None}
+    return urls, ids
+
+
+def _is_subscribed(
+    result_url: str, result_index_id: int | None, urls: set[str], ids: set[int]
+) -> bool:
+    if result_index_id is not None and result_index_id in ids:
+        return True
+    return normalize_feed_url(result_url) in urls
+
+
+async def _proxied_image(session: AsyncSession, image_url: str | None) -> str | None:
+    """Rewrite a publisher image URL to one this server will serve.
+
+    Search results are the last place a publisher URL could reach a client. Returning them
+    raw would have the browser fetch from every result's CDN, which is exactly the traffic
+    this server exists to absorb.
+    """
+    if not image_url:
+        return None
+    return f"/api/images/cache/{await register_artwork(session, image_url)}"
 
 
 def _unavailable(exc: PodcastIndexUnavailable) -> HTTPException:
@@ -38,7 +74,7 @@ async def search(
     except httpx.HTTPError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=f"Podcast Index request failed: {exc}") from exc
 
-    subscribed = await _subscribed_urls(session)
+    urls, ids = await _subscribed_index(session)
     return [
         SearchResultOut(
             podcast_index_id=r.podcast_index_id,
@@ -46,9 +82,9 @@ async def search(
             author=r.author,
             description=r.description,
             feed_url=r.feed_url,
-            image_url=r.image_url,
+            image_url=await _proxied_image(session, r.image_url),
             episode_count=r.episode_count,
-            already_subscribed=r.feed_url in subscribed,
+            already_subscribed=_is_subscribed(r.feed_url, r.podcast_index_id, urls, ids),
         )
         for r in results
     ]
@@ -67,7 +103,7 @@ async def search_by_feed_url(
     That keeps 'paste a private feed URL' working with no credentials at all.
     """
     app_settings = await get_app_settings(session)
-    subscribed = await _subscribed_urls(session)
+    urls, ids = await _subscribed_index(session)
 
     try:
         found = await podcastindex.podcast_by_feed_url(url, user_agent=app_settings.user_agent)
@@ -78,9 +114,11 @@ async def search_by_feed_url(
                 author=found.author,
                 description=found.description,
                 feed_url=found.feed_url,
-                image_url=found.image_url,
+                image_url=await _proxied_image(session, found.image_url),
                 episode_count=found.episode_count,
-                already_subscribed=found.feed_url in subscribed,
+                already_subscribed=_is_subscribed(
+                    found.feed_url, found.podcast_index_id, urls, ids
+                ),
             )
     except (PodcastIndexUnavailable, httpx.HTTPError):
         pass
@@ -99,7 +137,7 @@ async def search_by_feed_url(
         author=result.parsed.author,
         description=result.parsed.description,
         feed_url=result.final_url or url,
-        image_url=result.parsed.image_url,
+        image_url=await _proxied_image(session, result.parsed.image_url),
         episode_count=len(result.parsed.episodes),
-        already_subscribed=(result.final_url or url) in subscribed,
+        already_subscribed=_is_subscribed(result.final_url or url, None, urls, ids),
     )

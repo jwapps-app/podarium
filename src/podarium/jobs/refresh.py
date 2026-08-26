@@ -125,6 +125,8 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
 
     if result.not_modified:
         outcome.not_modified = True
+        if result.final_url:
+            feed.resolved_url = result.final_url
         # Auto-download still runs on an unchanged feed. The trigger for pre-downloading is
         # the setting, not new content: a feed the user just opted in to would otherwise
         # wait for its next episode before anything landed on disk.
@@ -137,6 +139,10 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         feed.etag = result.etag
     if result.last_modified:
         feed.last_modified = result.last_modified
+    if result.final_url:
+        # Recorded on every refresh, so a feed that moves hosts is recognised as the same
+        # subscription the next time it is looked up.
+        feed.resolved_url = result.final_url
 
     parsed = result.parsed
     if parsed is not None:

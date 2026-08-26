@@ -179,6 +179,21 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
     return parsed
 
 
+async def resolve_feed_url(url: str, *, user_agent: str) -> str | None:
+    """Follow redirects to find where a feed URL actually lands, without downloading it.
+
+    The response is streamed and closed immediately: resolving a 3,000-episode feed should
+    cost one round trip, not several megabytes.
+    """
+    try:
+        async with build_client(user_agent) as client:
+            async with client.stream("GET", url) as response:
+                return str(response.url)
+    except httpx.HTTPError:
+        # Unresolvable is not fatal; the caller falls back to the URL it was given.
+        return None
+
+
 async def fetch_feed(
     feed_url: str,
     *,
@@ -197,7 +212,15 @@ async def fetch_feed(
         response = await client.get(feed_url, headers=headers)
 
     if response.status_code == httpx.codes.NOT_MODIFIED:
-        return FetchResult(status_code=304, not_modified=True, etag=etag, last_modified=last_modified)
+        # final_url is reported here too. An unchanged feed still tells us where it serves
+        # from, and a feed that rarely changes would otherwise never record it at all.
+        return FetchResult(
+            status_code=304,
+            not_modified=True,
+            etag=etag,
+            last_modified=last_modified,
+            final_url=str(response.url),
+        )
 
     response.raise_for_status()
     return FetchResult(

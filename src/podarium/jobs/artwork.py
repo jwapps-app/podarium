@@ -92,6 +92,38 @@ async def ensure_artwork(session: AsyncSession, source_url: str, *, user_agent: 
         return entry
 
 
+async def register_artwork(session: AsyncSession, source_url: str) -> str:
+    """Record an image URL without fetching it, and return its hash.
+
+    Used for search results, where the show is not subscribed and the image may never be
+    looked at. Minting the hash server-side is what keeps /api/images/cache from being an
+    open proxy: a client can only ask for a URL this server already chose to record, so
+    there is no attacker-controlled address to redirect it at.
+    """
+    digest = url_hash(source_url)
+    existing = (
+        await session.execute(select(ArtworkCache).where(ArtworkCache.url_hash == digest))
+    ).scalar_one_or_none()
+    if existing is None:
+        session.add(ArtworkCache(url_hash=digest, source_url=source_url))
+        await session.commit()
+    return digest
+
+
+async def artwork_by_hash(
+    session: AsyncSession, digest: str, *, user_agent: str
+) -> ArtworkCache | None:
+    """Serve a previously registered image, fetching it on first request."""
+    entry = (
+        await session.execute(select(ArtworkCache).where(ArtworkCache.url_hash == digest))
+    ).scalar_one_or_none()
+    if entry is None:
+        return None
+    if entry.local_path and Path(entry.local_path).exists():
+        return entry
+    return await ensure_artwork(session, entry.source_url, user_agent=user_agent)
+
+
 async def ensure_feed_artwork(session: AsyncSession, feed: Feed, *, user_agent: str) -> ArtworkCache | None:
     if not feed.image_url:
         return None

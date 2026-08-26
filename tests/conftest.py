@@ -26,8 +26,11 @@ os.environ["DOWNLOAD_DIR"] = str(_TMP / "downloads")
 os.environ["ARTWORK_DIR"] = str(_TMP / "artwork")
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ["RUN_BACKGROUND_JOBS"] = "false"
-os.environ.pop("PODCASTINDEX_KEY", None)
-os.environ.pop("PODCASTINDEX_SECRET", None)
+# Blanked, not popped: Settings also reads .env, so removing the variables would let a
+# developer's real credentials leak into the run and make the suite pass or fail depending
+# on whose machine it is on. Environment takes precedence over the file, so "" wins.
+os.environ["PODCASTINDEX_KEY"] = ""
+os.environ["PODCASTINDEX_SECRET"] = ""
 
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 

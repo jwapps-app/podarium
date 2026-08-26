@@ -78,8 +78,13 @@ one container and one port for both the API and the UI.
 Changes to this codebase should preserve these. Each has a test.
 
 - No client response carries a publisher URL. Artwork is `/api/images/...`, audio is
-  `/api/stream/...`. Show notes are sanitised in the browser too: an `<img>` left in a
-  publisher's description would fetch straight from their CDN and leak the viewer's IP.
+  `/api/stream/...`, and that holds for search results too — a show you have not subscribed
+  to still has its cover proxied, keyed by a server-minted hash so the endpoint cannot be
+  pointed anywhere else. Show notes are sanitised in the browser as well: an `<img>` left in
+  a publisher's description would fetch straight from their CDN and leak the viewer's IP.
+- A show is one subscription however you reach it. Feeds are matched by URL, by resolved
+  URL after redirects, and by Podcast Index id — matching the raw string would let the same
+  podcast be subscribed twice, and two feed rows means two copies of every episode.
 - Retention deletes files, never episode rows.
 - `first_seen_at`, not `published_at`, decides whether an episode is new.
 - Feed refresh is idempotent.

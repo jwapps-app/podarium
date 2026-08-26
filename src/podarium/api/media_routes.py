@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from podarium.auth import current_user
 from podarium.clients.http import build_client
 from podarium.db import get_session
-from podarium.jobs.artwork import ensure_episode_artwork, ensure_feed_artwork
-from podarium.models import Episode, Feed, User
+from podarium.jobs.artwork import artwork_by_hash, ensure_episode_artwork, ensure_feed_artwork
+from podarium.models import ArtworkCache, Episode, Feed, User
 from podarium.services import get_app_settings
 
 router = APIRouter(prefix="/api", tags=["media"])
@@ -171,6 +171,54 @@ async def stream_episode(
     return await _proxy_origin(episode, request, app_settings.user_agent)
 
 
+def _artwork_response(entry: ArtworkCache | None, request: Request) -> Response:
+    """Shared cache handling for every artwork route.
+
+    The URL is stable but its content is not: a publisher can change their cover art, and
+    /api/images/feed/2 then has to start returning a different image. So the response is
+    validated rather than cached blind, with the ETag keyed to the source URL's hash --
+    new art means a new hash means an immediate refetch.
+
+    "private" because these endpoints are behind auth and must not sit in a shared proxy.
+    """
+    if entry is None or not entry.local_path or not Path(entry.local_path).exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No artwork available")
+
+    etag = f'"{entry.url_hash}"'
+    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=60, must-revalidate"}
+
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
+
+    return FileResponse(
+        entry.local_path,
+        media_type=entry.content_type or "image/jpeg",
+        headers=cache_headers,
+    )
+
+
+@router.get("/images/cache/{url_hash}")
+async def get_cached_image(
+    url_hash: str,
+    request: Request,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Artwork for a show that is not subscribed -- search results, mainly.
+
+    Search would otherwise be the one place the browser still talks to publisher CDNs, and
+    it is the worst place for it: you scroll past dozens of shows you never subscribe to,
+    handing your IP to each of their hosts. The hash is minted by the server when it
+    returns the results, so this cannot be pointed at an arbitrary address.
+    """
+    if len(url_hash) != 64 or not all(c in "0123456789abcdef" for c in url_hash):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Unknown image")
+
+    app_settings = await get_app_settings(session)
+    entry = await artwork_by_hash(session, url_hash, user_agent=app_settings.user_agent)
+    return _artwork_response(entry, request)
+
+
 @router.get("/images/{kind}/{object_id}")
 async def get_image(
     kind: str,
@@ -200,23 +248,4 @@ async def get_image(
             if feed is not None:
                 entry = await ensure_feed_artwork(session, feed, user_agent=app_settings.user_agent)
 
-    if entry is None or not entry.local_path or not Path(entry.local_path).exists():
-        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No artwork available")
-
-    # The URL is stable but its content is not: a publisher can change their cover art, and
-    # /api/images/feed/2 then has to start returning a different image. So the response is
-    # validated rather than cached blind, with the ETag keyed to the source URL's hash --
-    # new art means a new hash means an immediate refetch.
-    #
-    # "private" because this endpoint is behind auth and must not sit in a shared proxy.
-    etag = f'"{entry.url_hash}"'
-    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=60, must-revalidate"}
-
-    if request.headers.get("if-none-match") == etag:
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
-
-    return FileResponse(
-        entry.local_path,
-        media_type=entry.content_type or "image/jpeg",
-        headers=cache_headers,
-    )
+    return _artwork_response(entry, request)

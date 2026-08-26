@@ -177,3 +177,28 @@ async def test_backlog_is_inserted_oldest_first(session):
         )
     ).scalars().all()
     assert [e.title for e in listed] == ["Third", "Second", "First"]
+
+
+@respx.mock
+async def test_resolved_url_is_recorded_even_on_304(session):
+    """A feed that rarely changes must still record where it serves from.
+
+    Feed identity depends on the resolved URL -- it is how the same show subscribed under a
+    hosting platform's address is recognised when Podcast Index reports the publisher's own.
+    Recording it only on 200 would leave stable feeds permanently unidentified.
+    """
+    route = respx.get(FEED_URL)
+    route.side_effect = [
+        httpx.Response(200, content=ORIGINAL, headers={"ETag": '"v1"'}),
+        httpx.Response(304),
+    ]
+    feed = await _make_feed(session)
+
+    await refresh_feed(session, feed, user_agent="test")
+    feed.resolved_url = None  # as if the row predates the column
+    await session.commit()
+
+    outcome = await refresh_feed(session, feed, user_agent="test")
+
+    assert outcome.not_modified is True
+    assert feed.resolved_url is not None
