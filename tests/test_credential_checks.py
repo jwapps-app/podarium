@@ -37,8 +37,12 @@ def test_only_one_of_the_pair_is_flagged():
 def test_a_truncated_secret_is_flagged():
     """The Compose interpolation case: a '$' in the value eats the rest of it."""
     problems = " ".join(describe_credential_problems(GOOD_KEY, "G"))
-    assert "only 1 characters" in problems
+    assert "only 1 character," in problems
     assert "$$" in problems, "should say how to escape it"
+
+
+def test_the_truncation_message_pluralises():
+    assert "2 characters," in " ".join(describe_credential_problems(GOOD_KEY, "G$"))
 
 
 def test_an_uncollapsed_escape_is_flagged():
