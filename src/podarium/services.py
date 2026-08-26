@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.models import (
     AppSettings,
+    EpisodeState,
     DownloadJob,
     Episode,
     Feed,
@@ -17,6 +18,50 @@ from podarium.models import (
     JobState,
     RetentionMode,
 )
+
+
+async def feed_counts(
+    session: AsyncSession, user_id: int, feed_ids: list[int]
+) -> dict[int, tuple[int, int, int]]:
+    """Per-feed (total, unplayed, new) counts.
+
+    "New" means first seen since the show was last looked at, and not already played.
+    Falling back to the feed's created_at keeps a subscription made before feed_state
+    existed from reporting its whole back catalogue as new.
+    """
+    if not feed_ids:
+        return {}
+
+    seen_at = func.coalesce(FeedState.last_seen_at, Feed.created_at)
+
+    rows = (
+        await session.execute(
+            select(
+                Episode.feed_id,
+                func.count(Episode.id),
+                func.count(Episode.id).filter(
+                    func.coalesce(EpisodeState.played, False).is_(False)
+                ),
+                func.count(Episode.id).filter(
+                    (Episode.first_seen_at > seen_at)
+                    & func.coalesce(EpisodeState.played, False).is_(False)
+                ),
+            )
+            .select_from(Episode)
+            .join(Feed, Feed.id == Episode.feed_id)
+            .outerjoin(
+                EpisodeState,
+                (EpisodeState.episode_id == Episode.id) & (EpisodeState.user_id == user_id),
+            )
+            .outerjoin(
+                FeedState,
+                (FeedState.feed_id == Episode.feed_id) & (FeedState.user_id == user_id),
+            )
+            .where(Episode.feed_id.in_(feed_ids))
+            .group_by(Episode.feed_id)
+        )
+    ).all()
+    return {feed_id: (total, unplayed, new) for feed_id, total, unplayed, new in rows}
 
 
 async def mark_feed_seen(session: AsyncSession, user_id: int, feed_id: int) -> FeedState:

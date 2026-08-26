@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select
@@ -9,61 +11,24 @@ from podarium.clients.podcastindex import PodcastIndexUnavailable
 from podarium.db import get_session
 from podarium.jobs.refresh import apply_auto_download_window, refresh_feed
 from podarium.jobs.retention import purge_episode
-from podarium.models import Episode, EpisodeState, Feed, FeedState, User
+from podarium.models import DeletedFeed, Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import FeedCreateRequest, FeedOut, FeedUpdateRequest, feed_out
-from podarium.services import get_app_settings, mark_all_feeds_seen, mark_feed_seen
+from podarium.services import (
+    feed_counts,
+    get_app_settings,
+    mark_all_feeds_seen,
+    mark_feed_seen,
+)
 from podarium.subscribe import subscribe_feed
 
 router = APIRouter(prefix="/api/feeds", tags=["feeds"])
 
 
-async def _counts(
-    session: AsyncSession, user_id: int, feed_ids: list[int]
-) -> dict[int, tuple[int, int, int]]:
-    """Per-feed (total, unplayed, new) counts.
-
-    "New" means first seen since the show was last looked at, and not already played.
-    Falling back to the feed's created_at keeps a subscription made before feed_state
-    existed from reporting its whole back catalogue as new.
-    """
-    if not feed_ids:
-        return {}
-
-    seen_at = func.coalesce(FeedState.last_seen_at, Feed.created_at)
-
-    rows = (
-        await session.execute(
-            select(
-                Episode.feed_id,
-                func.count(Episode.id),
-                func.count(Episode.id).filter(
-                    func.coalesce(EpisodeState.played, False).is_(False)
-                ),
-                func.count(Episode.id).filter(
-                    (Episode.first_seen_at > seen_at)
-                    & func.coalesce(EpisodeState.played, False).is_(False)
-                ),
-            )
-            .select_from(Episode)
-            .join(Feed, Feed.id == Episode.feed_id)
-            .outerjoin(
-                EpisodeState,
-                (EpisodeState.episode_id == Episode.id) & (EpisodeState.user_id == user_id),
-            )
-            .outerjoin(
-                FeedState,
-                (FeedState.feed_id == Episode.feed_id) & (FeedState.user_id == user_id),
-            )
-            .where(Episode.feed_id.in_(feed_ids))
-            .group_by(Episode.feed_id)
-        )
-    ).all()
-    return {feed_id: (total, unplayed, new) for feed_id, total, unplayed, new in rows}
 
 
 async def _feed_out(session: AsyncSession, feed: Feed, user_id: int) -> FeedOut:
     app_settings = await get_app_settings(session)
-    total, unplayed, new = (await _counts(session, user_id, [feed.id])).get(feed.id, (0, 0, 0))
+    total, unplayed, new = (await feed_counts(session, user_id, [feed.id])).get(feed.id, (0, 0, 0))
     return feed_out(
         feed,
         episode_count=total,
@@ -83,7 +48,7 @@ async def list_feeds(
     if active is not None:
         statement = statement.where(Feed.active.is_(active))
     feeds = (await session.execute(statement)).scalars().all()
-    counts = await _counts(session, user.id, [f.id for f in feeds])
+    counts = await feed_counts(session, user.id, [f.id for f in feeds])
     app_settings = await get_app_settings(session)
     return [
         feed_out(
@@ -227,6 +192,18 @@ async def delete_feed(
         for episode in episodes:
             await purge_episode(session, episode, reason="manual")
 
+    # Leave a tombstone before the row goes, or a synced client has no way to learn this
+    # happened -- the feed just stops appearing in deltas, which looks like "unchanged".
+    #
+    # Refresh an existing one rather than inserting blindly. Postgres does not reuse ids in
+    # normal operation, but a restore or a reset sequence can, and a delete that 500s on a
+    # primary key collision would be a baffling way to find that out.
+    tombstone = await session.get(DeletedFeed, feed.id)
+    if tombstone is None:
+        session.add(DeletedFeed(feed_id=feed.id, feed_url=feed.feed_url))
+    else:
+        tombstone.feed_url = feed.feed_url
+        tombstone.deleted_at = datetime.now(UTC)
     await session.delete(feed)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

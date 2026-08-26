@@ -85,9 +85,12 @@ async def _clean_state():
 
     async with db_module.get_sessionmaker()() as session:
         await session.execute(
+            # Every table, derived from the metadata rather than listed by hand -- a
+            # hand-written list silently stops covering each new table that is added.
             text(
-                "TRUNCATE artwork_cache, download_jobs, queue, episode_state, "
-                "episodes, feeds, api_tokens, users, settings RESTART IDENTITY CASCADE"
+                "TRUNCATE "
+                + ", ".join(Base.metadata.tables)
+                + " RESTART IDENTITY CASCADE"
             )
         )
         await session.commit()

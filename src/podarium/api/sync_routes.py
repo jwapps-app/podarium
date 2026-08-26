@@ -22,8 +22,9 @@ from podarium.api.queue_routes import _load_queue
 from podarium.auth import current_user
 from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
 from podarium.db import get_session
-from podarium.models import Episode, EpisodeState, Feed, User
+from podarium.models import DeletedFeed, Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import SyncOut, episode_out, feed_out
+from podarium.services import feed_counts, get_app_settings
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -98,23 +99,61 @@ async def sync(
             marker = last_state.updated_at
         next_cursor = encode_cursor(marker, last_episode.id)
 
-    # Feeds and the queue are one person's, so they are small enough to send whole -- but
-    # only on the first page. Repeating them on every page of a large backfill would be
-    # pure overhead, and a client that restarts a paging run gets them again anyway.
+    episodes = [episode_out(episode, episode_state) for episode, episode_state in rows]
+
+    # Feeds, the queue and deletions are one person's, so they are small enough to send
+    # whole -- but only on the first page. Repeating them on every page of a large backfill
+    # would be pure overhead, and a client that restarts a paging run gets them again anyway.
     if cursor:
-        feeds: list = []
-        queue: list = []
-    else:
-        feed_statement = select(Feed).order_by(Feed.id)
-        if since is not None:
-            feed_statement = feed_statement.where(Feed.updated_at > since)
-        feeds = [feed_out(feed) for feed in (await session.execute(feed_statement)).scalars()]
-        queue = await _load_queue(session, user.id)
+        return SyncOut(
+            now=now, feeds=[], episodes=episodes, queue=[], deleted_feed_ids=[],
+            next_cursor=next_cursor,
+        )
+
+    feed_state = aliased(FeedState)
+
+    # A feed belongs in the delta when its own row changed *or* when this user's state for
+    # it did. Marking a show seen writes only to feed_state, so keying off Feed.updated_at
+    # alone would leave a client's new-episode badge permanently stale.
+    feed_changed_at = func.greatest(
+        Feed.updated_at, func.coalesce(feed_state.updated_at, Feed.updated_at)
+    )
+
+    feed_statement = (
+        select(Feed)
+        .outerjoin(
+            feed_state, (feed_state.feed_id == Feed.id) & (feed_state.user_id == user.id)
+        )
+        .order_by(Feed.id)
+    )
+    if since is not None:
+        feed_statement = feed_statement.where(feed_changed_at > since)
+
+    changed_feeds = list((await session.execute(feed_statement)).scalars())
+
+    # The same counts /api/feeds reports. Without them a synced client holds feeds with no
+    # episode totals and no badge, and has to re-fetch every one of them to fill the gaps.
+    app_settings = await get_app_settings(session)
+    counts = await feed_counts(session, user.id, [feed.id for feed in changed_feeds])
+
+    deleted_statement = select(DeletedFeed.feed_id)
+    if since is not None:
+        deleted_statement = deleted_statement.where(DeletedFeed.deleted_at > since)
 
     return SyncOut(
         now=now,
-        feeds=feeds,
-        episodes=[episode_out(episode, episode_state) for episode, episode_state in rows],
-        queue=queue,
+        feeds=[
+            feed_out(
+                feed,
+                episode_count=counts.get(feed.id, (0, 0, 0))[0],
+                unplayed_count=counts.get(feed.id, (0, 0, 0))[1],
+                new_episode_count=counts.get(feed.id, (0, 0, 0))[2],
+                global_auto_download_count=app_settings.global_auto_download_count,
+            )
+            for feed in changed_feeds
+        ],
+        episodes=episodes,
+        queue=await _load_queue(session, user.id),
+        deleted_feed_ids=list((await session.execute(deleted_statement)).scalars()),
         next_cursor=next_cursor,
     )

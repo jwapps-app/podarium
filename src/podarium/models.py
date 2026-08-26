@@ -254,6 +254,23 @@ class AppSettings(Base):
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
 
 
+class DeletedFeed(Base):
+    """A tombstone, so a client can learn that a feed is gone.
+
+    Unsubscribing with purge removes the row outright, which leaves a synced client with no
+    way to know: the feed simply stops appearing in a delta, which is indistinguishable
+    from it not having changed. Without this, /api/sync's deleted_feed_ids could only ever
+    be an empty list -- a field a client author would reasonably trust.
+    """
+
+    __tablename__ = "deleted_feeds"
+
+    # Not a foreign key: the whole point is that the feed no longer exists.
+    feed_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    feed_url: Mapped[str | None] = mapped_column(Text)
+    deleted_at: Mapped[datetime] = _now_col(nullable=False, index=True)
+
+
 class ArtworkCache(Base):
     """Server-side artwork cache. Clients never hit a publisher CDN (spec 5)."""
 
