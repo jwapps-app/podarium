@@ -34,6 +34,9 @@ services:
       retries: 10
 
   api:
+    # Multi-architecture: the same tag resolves to amd64 or arm64 depending on the host,
+    # so this line does not change if the stack ever moves to different hardware.
+    # Published by .github/workflows/build.yml on every push to main.
     image: ghcr.io/jwapps-app/podarium-api:latest
     container_name: podarium-api
     restart: unless-stopped

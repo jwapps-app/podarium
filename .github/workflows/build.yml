@@ -1,0 +1,108 @@
+name: build
+
+# Pushes a multi-architecture image to GHCR so the same tag runs on docker-audio (amd64),
+# a Pi, or an Apple Silicon Mac without anyone thinking about it.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/podarium-api
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        # Matches production. The suite uses FOR UPDATE SKIP LOCKED and
+        # count(...) FILTER (WHERE ...), so a different engine would not be exercising
+        # the code that ships.
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: podarium
+          POSTGRES_PASSWORD: podarium
+          POSTGRES_DB: podarium
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U podarium"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Python tests
+        env:
+          PODARIUM_DEV_DATABASE_URL: postgresql+asyncpg://podarium:podarium@localhost:5432/podarium
+        run: |
+          uv venv --python 3.12
+          uv pip install -e ".[dev]"
+          uv run pytest -q
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Web typecheck and tests
+        working-directory: web
+        run: |
+          npm ci
+          npx tsc -b --noEmit
+          npm test
+
+  build:
+    # Only ever publish something the suite has passed.
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Needed to build arm64 on an amd64 runner. The web stage is pinned to the build
+      # platform in the Dockerfile, so only the Python layers run emulated.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        # The workflow's own token; no PAT to create, rotate, or leak.
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=tag
+            type=sha,format=short
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # A pull request builds to prove it still compiles, but publishes nothing.
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,7 +1,12 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------- web UI
-FROM node:22-slim AS web
+#
+# Pinned to the build host's architecture, not the target's. The output is static JS and
+# CSS, identical whatever it was built on, so there is nothing to gain from running npm
+# under emulation -- and a great deal to lose: an emulated arm64 npm build is minutes of
+# wall clock for a byte-identical result.
+FROM --platform=$BUILDPLATFORM node:22-slim AS web
 
 WORKDIR /web
 
@@ -14,6 +19,9 @@ RUN npm run build
 
 
 # ---------------------------------------------------------------- python deps
+#
+# This one does have to match the target: asyncpg, argon2-cffi and uvloop ship compiled
+# wheels, so the venv is architecture-specific.
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 ENV UV_COMPILE_BYTECODE=1 \
