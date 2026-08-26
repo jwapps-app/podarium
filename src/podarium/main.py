@@ -32,6 +32,10 @@ from podarium.api import (
     sync_routes,
 )
 from podarium.auth import bootstrap_user
+from podarium.clients.podcastindex import (
+    describe_credential_problems,
+    verify_credentials,
+)
 from podarium.config import get_settings
 from podarium.db import get_sessionmaker
 from podarium.jobs.downloader import download_workers
@@ -56,10 +60,34 @@ async def lifespan(app: FastAPI):
             await session.commit()
         await bootstrap_user(session, settings)
 
+    # Credentials are checked at startup, not on first search. A bad one otherwise waits
+    # until someone types a query and then reports a 401 from Podcast Index -- three layers
+    # from the cause, and identical whether the value is wrong, truncated, or the clock is
+    # off. The shape checks run inline; the live one does not hold up the boot.
+    for problem in describe_credential_problems(
+        settings.podcastindex_key, settings.podcastindex_secret
+    ):
+        log.warning("Podcast Index credentials: %s", problem)
+
+    async def _check_credentials() -> None:
+        async with get_sessionmaker()() as session:
+            app_settings = await get_app_settings(session)
+        result = await verify_credentials(app_settings.user_agent)
+        if result == "accepted":
+            log.info("Podcast Index credentials accepted; search is available")
+        elif result == "not configured":
+            log.info(
+                "Podcast Index credentials not set; search returns 503 and the UI says so. "
+                "Everything else is unaffected."
+            )
+        else:
+            log.warning("Podcast Index credentials %s", result)
+
     stop = asyncio.Event()
     tasks: list[asyncio.Task] = []
     if settings.run_background_jobs:
         tasks = [
+            asyncio.create_task(_check_credentials(), name="credential-check"),
             asyncio.create_task(refresh_loop(stop), name="refresh"),
             asyncio.create_task(download_workers(stop), name="downloads"),
             asyncio.create_task(
