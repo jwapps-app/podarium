@@ -11,7 +11,7 @@ from podarium.jobs.refresh import apply_auto_download_window, refresh_feed
 from podarium.jobs.retention import purge_episode
 from podarium.models import Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import FeedCreateRequest, FeedOut, FeedUpdateRequest, feed_out
-from podarium.services import get_app_settings, mark_feed_seen
+from podarium.services import get_app_settings, mark_all_feeds_seen, mark_feed_seen
 from podarium.subscribe import subscribe_feed
 
 router = APIRouter(prefix="/api/feeds", tags=["feeds"])
@@ -228,6 +228,24 @@ async def delete_feed(
             await purge_episode(session, episode, reason="manual")
 
     await session.delete(feed)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/seen", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_all_seen(
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Clear every show's new-episode count at once. The inbox calls this when opened.
+
+    Declared before the /{feed_id}/... routes so "seen" is never read as a feed id.
+
+    This necessarily zeroes the library tiles too: the nav badge is the sum of them, so
+    there is no clearing one without the other. As with the per-show version, nothing is
+    marked played -- seen and played are different claims.
+    """
+    await mark_all_feeds_seen(session, user.id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

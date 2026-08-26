@@ -31,6 +31,20 @@ async def mark_feed_seen(session: AsyncSession, user_id: int, feed_id: int) -> F
     return state
 
 
+async def mark_all_feeds_seen(session: AsyncSession, user_id: int) -> int:
+    """Clear every active show's new-episode count. Called when the inbox is opened.
+
+    Active only, matching the nav badge, which sums active feeds. A soft-unsubscribed show
+    is not something the inbox is offering you.
+    """
+    feeds = (
+        await session.execute(select(Feed.id).where(Feed.active.is_(True)))
+    ).scalars().all()
+    for feed_id in feeds:
+        await mark_feed_seen(session, user_id, feed_id)
+    return len(feeds)
+
+
 async def get_app_settings(session: AsyncSession) -> AppSettings:
     """Fetch (creating on first call) the singleton settings row."""
     settings_row = await session.get(AppSettings, 1)

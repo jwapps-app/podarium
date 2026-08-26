@@ -153,3 +153,63 @@ async def test_a_feed_with_no_seen_row_falls_back_to_its_creation_time(session, 
     await session.commit()
 
     assert await _badge(client) == 0
+
+
+# --- clearing everything at once ----------------------------------------------
+#
+# Opening the inbox clears the badge. The nav badge is the sum of the library tiles, so
+# there is no clearing one without the other.
+
+
+async def test_marking_all_seen_clears_every_show(session, client, user):
+    from podarium.models import Feed
+
+    second = Feed(feed_url="https://other.example/feed.xml", title="Other")
+    session.add(second)
+    await session.commit()
+    await session.refresh(second)
+
+    await _add_new_episodes(session, client.feed_id, 3)
+    await _add_new_episodes(session, second.id, 2)
+
+    response = await client.post("/api/feeds/seen")
+    assert response.status_code == 204
+
+    feeds = (await client.get("/api/feeds")).json()
+    assert [f["new_episode_count"] for f in feeds] == [0, 0]
+
+
+async def test_marking_all_seen_does_not_mark_anything_played(session, client):
+    """Seen and played are different claims, here as everywhere else."""
+    await _add_new_episodes(session, client.feed_id, 3)
+    before = (await client.get(f"/api/feeds/{client.feed_id}")).json()["unplayed_count"]
+
+    await client.post("/api/feeds/seen")
+
+    after = (await client.get(f"/api/feeds/{client.feed_id}")).json()
+    assert after["unplayed_count"] == before
+    assert after["new_episode_count"] == 0
+
+
+async def test_marking_all_seen_leaves_unsubscribed_shows_alone(session, client, user):
+    """A soft-unsubscribed show is not something the inbox is offering you."""
+    from podarium.models import Feed, FeedState
+
+    inactive = Feed(feed_url="https://gone.example/feed.xml", title="Gone", active=False)
+    session.add(inactive)
+    await session.commit()
+    await session.refresh(inactive)
+    marker = datetime.now(UTC) - timedelta(days=30)
+    session.add(FeedState(user_id=user.id, feed_id=inactive.id, last_seen_at=marker))
+    await session.commit()
+
+    await client.post("/api/feeds/seen")
+
+    state = await session.get(FeedState, {"user_id": user.id, "feed_id": inactive.id})
+    assert state.last_seen_at == marker, "an inactive feed's marker must not move"
+
+
+async def test_seen_is_not_read_as_a_feed_id(client):
+    """The literal path must not be captured by the /{feed_id}/ routes."""
+    response = await client.post("/api/feeds/seen")
+    assert response.status_code == 204
