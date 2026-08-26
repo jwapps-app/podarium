@@ -7,7 +7,28 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from podarium.models import AppSettings, DownloadJob, Episode, Feed, JobSource, JobState, RetentionMode
+from podarium.models import (
+    AppSettings,
+    DownloadJob,
+    Episode,
+    Feed,
+    FeedState,
+    JobSource,
+    JobState,
+    RetentionMode,
+)
+
+
+async def mark_feed_seen(session: AsyncSession, user_id: int, feed_id: int) -> FeedState:
+    """Reset a show's new-episode count. Called when its page is opened."""
+    state = await session.get(FeedState, {"user_id": user_id, "feed_id": feed_id})
+    now = datetime.now(UTC)
+    if state is None:
+        state = FeedState(user_id=user_id, feed_id=feed_id, last_seen_at=now)
+        session.add(state)
+    else:
+        state.last_seen_at = now
+    return state
 
 
 async def get_app_settings(session: AsyncSession) -> AppSettings:

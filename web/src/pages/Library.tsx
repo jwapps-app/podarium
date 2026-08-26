@@ -44,8 +44,13 @@ export function LibraryPage() {
               />
               {feed.fetch_error_count > 0 ? (
                 <span className="badge badge-error" title={feed.fetch_error ?? "Refresh failed"}>!</span>
-              ) : feed.unplayed_count ? (
-                <span className="badge">{feed.unplayed_count > 99 ? "99+" : feed.unplayed_count}</span>
+              ) : feed.new_episode_count ? (
+                <span
+                  className="badge"
+                  title={`${feed.new_episode_count} new since you last opened this show`}
+                >
+                  {feed.new_episode_count > 99 ? "99+" : feed.new_episode_count}
+                </span>
               ) : null}
               <div className="feed-card-title">{feed.title ?? feed.feed_url}</div>
               {feed.author ? <div className="feed-card-author">{feed.author}</div> : null}

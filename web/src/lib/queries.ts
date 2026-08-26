@@ -64,6 +64,7 @@ export function useFeedActions() {
 
   return {
     refresh: useMutation({ mutationFn: (id: number) => api.refreshFeed(id), onSettled }),
+    markSeen: useMutation({ mutationFn: (id: number) => api.markFeedSeen(id), onSettled }),
     update: useMutation({
       mutationFn: ({ id, ...body }: { id: number } & Parameters<typeof api.updateFeed>[1]) =>
         api.updateFeed(id, body),

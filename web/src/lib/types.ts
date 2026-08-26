@@ -47,6 +47,8 @@ export interface Feed {
   updated_at: string;
   episode_count: number | null;
   unplayed_count: number | null;
+  /** Episodes that arrived since this show was last looked at. This drives the badge. */
+  new_episode_count: number | null;
 }
 
 export interface Episode {

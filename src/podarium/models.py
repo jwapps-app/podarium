@@ -187,6 +187,26 @@ class EpisodeState(Base):
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now(), index=True)
 
 
+class FeedState(Base):
+    """Per-user, per-feed "I have looked at this show" marker.
+
+    Separate from played state because they answer different questions. "Unplayed" counts a
+    backlog you never intended to work through -- subscribing to a show with 2,700 episodes
+    does not mean you owe it 2,700 listens -- so a badge built on it reads 99+ forever and
+    tells you nothing. "Unseen" is the actionable one: what has arrived since you last
+    looked.
+    """
+
+    __tablename__ = "feed_state"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    feed_id: Mapped[int] = mapped_column(ForeignKey("feeds.id", ondelete="CASCADE"), primary_key=True)
+    # Episodes first seen after this are new. Set when the show is subscribed, so its
+    # existing back catalogue never counts as new, and again whenever it is viewed.
+    last_seen_at: Mapped[datetime] = _now_col(nullable=False)
+    updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now(), index=True)
+
+
 class QueueItem(Base):
     __tablename__ = "queue"
     __table_args__ = (UniqueConstraint("user_id", "episode_id", name="uq_queue_user_episode"),)

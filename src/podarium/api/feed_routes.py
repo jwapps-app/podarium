@@ -9,17 +9,28 @@ from podarium.clients.podcastindex import PodcastIndexUnavailable
 from podarium.db import get_session
 from podarium.jobs.refresh import enqueue_auto_downloads, refresh_feed
 from podarium.jobs.retention import purge_episode
-from podarium.models import Episode, EpisodeState, Feed, User
+from podarium.models import Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import FeedCreateRequest, FeedOut, FeedUpdateRequest, feed_out
-from podarium.services import get_app_settings
+from podarium.services import get_app_settings, mark_feed_seen
 from podarium.subscribe import subscribe_feed
 
 router = APIRouter(prefix="/api/feeds", tags=["feeds"])
 
 
-async def _counts(session: AsyncSession, user_id: int, feed_ids: list[int]) -> dict[int, tuple[int, int]]:
+async def _counts(
+    session: AsyncSession, user_id: int, feed_ids: list[int]
+) -> dict[int, tuple[int, int, int]]:
+    """Per-feed (total, unplayed, new) counts.
+
+    "New" means first seen since the show was last looked at, and not already played.
+    Falling back to the feed's created_at keeps a subscription made before feed_state
+    existed from reporting its whole back catalogue as new.
+    """
     if not feed_ids:
         return {}
+
+    seen_at = func.coalesce(FeedState.last_seen_at, Feed.created_at)
+
     rows = (
         await session.execute(
             select(
@@ -28,25 +39,36 @@ async def _counts(session: AsyncSession, user_id: int, feed_ids: list[int]) -> d
                 func.count(Episode.id).filter(
                     func.coalesce(EpisodeState.played, False).is_(False)
                 ),
+                func.count(Episode.id).filter(
+                    (Episode.first_seen_at > seen_at)
+                    & func.coalesce(EpisodeState.played, False).is_(False)
+                ),
             )
+            .select_from(Episode)
+            .join(Feed, Feed.id == Episode.feed_id)
             .outerjoin(
                 EpisodeState,
                 (EpisodeState.episode_id == Episode.id) & (EpisodeState.user_id == user_id),
+            )
+            .outerjoin(
+                FeedState,
+                (FeedState.feed_id == Episode.feed_id) & (FeedState.user_id == user_id),
             )
             .where(Episode.feed_id.in_(feed_ids))
             .group_by(Episode.feed_id)
         )
     ).all()
-    return {feed_id: (total, unplayed) for feed_id, total, unplayed in rows}
+    return {feed_id: (total, unplayed, new) for feed_id, total, unplayed, new in rows}
 
 
 async def _feed_out(session: AsyncSession, feed: Feed, user_id: int) -> FeedOut:
     app_settings = await get_app_settings(session)
-    total, unplayed = (await _counts(session, user_id, [feed.id])).get(feed.id, (0, 0))
+    total, unplayed, new = (await _counts(session, user_id, [feed.id])).get(feed.id, (0, 0, 0))
     return feed_out(
         feed,
         episode_count=total,
         unplayed_count=unplayed,
+        new_episode_count=new,
         global_auto_download_count=app_settings.global_auto_download_count,
     )
 
@@ -66,8 +88,9 @@ async def list_feeds(
     return [
         feed_out(
             f,
-            episode_count=counts.get(f.id, (0, 0))[0],
-            unplayed_count=counts.get(f.id, (0, 0))[1],
+            episode_count=counts.get(f.id, (0, 0, 0))[0],
+            unplayed_count=counts.get(f.id, (0, 0, 0))[1],
+            new_episode_count=counts.get(f.id, (0, 0, 0))[2],
             global_auto_download_count=app_settings.global_auto_download_count,
         )
         for f in feeds
@@ -108,7 +131,11 @@ async def create_feed(
     feed, created = await subscribe_feed(
         session, feed_url, user_agent=app_settings.user_agent, podcast_index_id=podcast_index_id
     )
-    if not created:
+    if created:
+        # The back catalogue arrives with the subscription; none of it is new to you.
+        await mark_feed_seen(session, user.id, feed.id)
+        await session.commit()
+    else:
         response.status_code = status.HTTP_200_OK
     return await _feed_out(session, feed, user.id)
 
@@ -203,6 +230,24 @@ async def delete_feed(
     await session.delete(feed)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/{feed_id}/seen", response_model=FeedOut)
+async def mark_seen(
+    feed_id: int,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> FeedOut:
+    """Clear the show's new-episode count.
+
+    Opening the show's page is what calls this. Playing an episode already removes that one
+    from the count, but a show you dip into rather than follow needs a way to say "I have
+    looked, I am not taking the rest" without marking anything played.
+    """
+    feed = await _get_feed_or_404(session, feed_id)
+    await mark_feed_seen(session, user.id, feed.id)
+    await session.commit()
+    return await _feed_out(session, feed, user.id)
 
 
 @router.post("/{feed_id}/refresh", response_model=FeedOut)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { Artwork } from "../components/Artwork";
@@ -29,6 +29,17 @@ export function FeedDetailPage() {
     limit: 100,
     unplayed: showUnplayedOnly ? true : undefined,
   });
+
+  // Opening the show is what clears its badge. Once per visit, and only after the feed has
+  // actually loaded, so a failed load does not silently mark it seen.
+  const markedRef = useRef<number | null>(null);
+  const markSeen = actions.markSeen;
+  useEffect(() => {
+    if (!feed || markedRef.current === feed.id) return;
+    if (!feed.new_episode_count) return;
+    markedRef.current = feed.id;
+    markSeen.mutate(feed.id);
+  }, [feed, markSeen]);
 
   if (isLoading) return <Loading label="Loading show" />;
   if (error) return <ErrorNotice error={error} />;

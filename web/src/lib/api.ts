@@ -130,6 +130,8 @@ export const api = {
 
   refreshFeed: (id: number) => request<Feed>(`/api/feeds/${id}/refresh`, { method: "POST" }),
 
+  markFeedSeen: (id: number) => request<Feed>(`/api/feeds/${id}/seen`, { method: "POST" }),
+
   // -- episodes ------------------------------------------------------------
   episodes: (filters: EpisodeFilters = {}) =>
     request<EpisodeList>(`/api/episodes${query({ ...filters })}`),

@@ -104,6 +104,9 @@ class FeedOut(BaseModel):
     updated_at: datetime
     episode_count: int | None = None
     unplayed_count: int | None = None
+    # Episodes that arrived since this show was last looked at. This is what the badge
+    # shows -- unplayed counts a backlog nobody intends to finish.
+    new_episode_count: int | None = None
 
 
 class EpisodeOut(BaseModel):
@@ -219,6 +222,7 @@ def feed_out(
     *,
     episode_count: int | None = None,
     unplayed_count: int | None = None,
+    new_episode_count: int | None = None,
     global_auto_download_count: int = 0,
 ) -> FeedOut:
     return FeedOut(
@@ -248,6 +252,7 @@ def feed_out(
         updated_at=feed.updated_at,
         episode_count=episode_count,
         unplayed_count=unplayed_count,
+        new_episode_count=new_episode_count,
     )
 
 
