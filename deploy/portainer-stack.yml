@@ -25,6 +25,8 @@
 #         LOGIN_PASSWORD       what you will type to sign in
 #         PODCASTINDEX_KEY     from your local .env -- optional
 #         PODCASTINDEX_SECRET  from your local .env -- optional
+#         PUBLIC_URL           optional; defaults to http://192.168.1.30:8044
+#                              set to https://<hostname> once Cloudflare fronts it
 #
 #     The four with :? are required and fail the deploy loudly if unset. Leaving the
 #     Podcast Index pair out is fine: search returns a clean 503 and the UI says so, while
@@ -90,10 +92,15 @@ services:
       # mismatch shows up as the API restarting in a loop while Postgres looks healthy.
       DATABASE_URL: postgresql+asyncpg://podarium:${DB_PASSWORD}@postgres:5432/podarium
 
-      # The externally reachable URL. The server builds absolute links from it, and the
-      # session cookie is marked Secure only when this is https -- set that wrongly while
-      # serving plain http and logins fail silently, with no error to read.
-      PUBLIC_URL: http://192.168.1.30:8044
+      # How the browser reaches this. Leave the variable unset for the LAN address; set it
+      # to the Cloudflare hostname once that fronts it.
+      #
+      # Its only job is deciding whether the session cookie is marked Secure. The two
+      # directions are not symmetric: an http value reached over https merely leaves the
+      # cookie unflagged, which browsers accept, but an https value reached over plain http
+      # makes the browser drop the cookie entirely -- a login screen that never goes away,
+      # with nothing in any log. So if you use both routes, leave this on the LAN default.
+      PUBLIC_URL: ${PUBLIC_URL:-http://192.168.1.30:8044}
 
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment variables panel}
 
