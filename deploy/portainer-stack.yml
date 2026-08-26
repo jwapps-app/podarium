@@ -1,16 +1,46 @@
-# Podarium production stack for docker-audio (192.168.1.30).
+# Podarium — Portainer stack for docker-audio (192.168.1.30)
 #
-# This file is a DOCUMENT, not a live compose file: paste it into the Portainer web editor.
-# There is deliberately no compose file on disk on the host.
+# Paste into the Portainer web editor. There is deliberately no compose file on the host.
 #
-# Before deploying, confirm the port is free on the host:
-#     ss -tlnp | grep 8044
-# 8040 is PinePods. If 8044 is taken, change both the published port and PUBLIC_URL below.
+# ---------------------------------------------------------------------------------------
+# BEFORE DEPLOYING
+# ---------------------------------------------------------------------------------------
 #
-# NFS prerequisite: /mnt/nas/podarium must be mounted from 192.168.1.42 via fstab with
-#     noauto,x-systemd.automount,soft,timeo=100
-# Do NOT add RequiresMountsFor= to the docker.service drop-in. Combined with noauto it
-# blocks Docker from ever starting.
+#  1. Confirm the port is free:
+#         ss -tlnp | grep 8044
+#     8040 is PinePods. If 8044 is taken, change the published port AND PUBLIC_URL below.
+#
+#  2. Create the data directories and give them to the uid the container runs as:
+#         sudo mkdir -p /home/jworthington/docker/podarium/{pgdata,downloads,artwork}
+#         sudo chown -R 1026:100 /home/jworthington/docker/podarium/{downloads,artwork}
+#     pgdata is left alone -- the Postgres image manages its own ownership.
+#
+#  3. Fill in every CHANGE_ME below. Generate the two random ones with:
+#         openssl rand -hex 32
+#     The Podcast Index key and secret are in your local .env; search only needs them,
+#     and everything else works without.
+#
+#  4. Portainer already has a `ghcr` registry with authentication enabled. This is the
+#     first *private* package it will pull, so if that stored token has expired this is
+#     where it surfaces -- as an auth error on pull, not a stack error.
+#
+# ---------------------------------------------------------------------------------------
+# STORAGE
+# ---------------------------------------------------------------------------------------
+#
+# Audio lives on local NVMe, not the NAS. Measured against real downloads the working set
+# is about 1.2 GB for four shows at three episodes each, roughly 6 GB at fifteen shows, and
+# retention plus the auto-download window keep it converging rather than growing.
+#
+# The reason the spec put audio on the NAS still stands, though, and it is about backups
+# rather than disks: this is churning, incompressible, re-downloadable data that should not
+# enter vzdump or reach PBS. Exclude
+#     /home/jworthington/docker/podarium/downloads
+# from the backup job once you have watched it for a while.
+#
+# Moving to the NAS later is a four-step job and needs no database change, because
+# local_path stores the *container* path and that never moves: stop the stack, rsync the
+# files across, swap the one bind mount marked below, start it again.
 
 services:
   postgres:
@@ -19,13 +49,13 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: podarium
-      POSTGRES_PASSWORD: CHANGE_ME_BEFORE_DEPLOY
+      POSTGRES_PASSWORD: CHANGE_ME_DB_PASSWORD
       POSTGRES_DB: podarium
-      # Postgres 18 mounts at /var/lib/pgdata with PGDATA one level deeper. The old
+      # Postgres 18 mounts at /var/lib/pgdata with PGDATA one level deeper. The older
       # /var/lib/postgresql/data path fails on overlay2 hosts -- this bit the PinePods stack.
       PGDATA: /var/lib/pgdata/pgdata
     volumes:
-      # Small and valuable: local NVMe, so it is covered by vzdump/PBS.
+      # Small, valuable, and the one thing here worth backing up.
       - /home/jworthington/docker/podarium/pgdata:/var/lib/pgdata
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U podarium"]
@@ -34,44 +64,77 @@ services:
       retries: 10
 
   api:
-    # Multi-architecture: the same tag resolves to amd64 or arm64 depending on the host,
-    # so this line does not change if the stack ever moves to different hardware.
-    # Published by .github/workflows/build.yml on every push to main.
+    # Multi-architecture: the same tag resolves to amd64 or arm64 by host, so this line
+    # does not change if the stack ever moves. Published by .github/workflows/build.yml.
     image: ghcr.io/jwapps-app/podarium-api:latest
     container_name: podarium-api
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
-    # Matches ownership on the NFS share.
+    # Kept at the NFS share's ownership even while the data is local, so moving to the NAS
+    # later is a bind-mount change and nothing else.
     user: "1026:100"
     environment:
-      DATABASE_URL: postgresql+asyncpg://podarium:CHANGE_ME_BEFORE_DEPLOY@postgres:5432/podarium
+      # Must match POSTGRES_PASSWORD above.
+      DATABASE_URL: postgresql+asyncpg://podarium:CHANGE_ME_DB_PASSWORD@postgres:5432/podarium
 
-      # Must be the externally reachable URL; the server builds absolute links from it,
-      # and the session cookie is marked Secure only when this is https.
+      # The externally reachable URL. The server builds absolute links from it, and the
+      # session cookie is marked Secure only when this is https -- set that wrongly while
+      # serving plain http and logins fail silently, with no error to read.
       PUBLIC_URL: http://192.168.1.30:8044
 
-      # Sign sessions with a long random value: openssl rand -hex 32
-      SECRET_KEY: CHANGE_ME_BEFORE_DEPLOY
+      # openssl rand -hex 32
+      SECRET_KEY: CHANGE_ME_SECRET_KEY
 
       DOWNLOAD_DIR: /downloads
       ARTWORK_DIR: /artwork
 
-      # Applied only on first boot, while the users table is empty. Leaving them here after
-      # that is harmless -- they are ignored once the account exists.
+      # Applied only on first boot, while the users table is empty. Leaving them here
+      # afterwards is harmless; they are ignored once the account exists, so a restart
+      # cannot reset your password.
       PODARIUM_USERNAME: jworthington
-      PODARIUM_PASSWORD: CHANGE_ME_BEFORE_DEPLOY
+      PODARIUM_PASSWORD: CHANGE_ME_LOGIN_PASSWORD
 
-      # Free key from podcastindex.org. Discovery only; search returns 503 without them
-      # and every other feature keeps working.
+      # Free from podcastindex.org; copy from your local .env. Discovery only. Without
+      # them /api/search returns a clean 503 and the UI says so; subscribing by feed URL,
+      # refresh, downloads, retention and playback all work regardless.
       PODCASTINDEX_KEY: ""
       PODCASTINDEX_SECRET: ""
 
+      # Two concurrent downloads. Raise it and a refresh that queues several long episodes
+      # will saturate the link.
       DOWNLOAD_CONCURRENCY: "2"
+
+      # How often retention sweeps. Auto-download trimming runs on each feed refresh.
+      RETENTION_SWEEP_MINUTES: "60"
     volumes:
-      # Large, churny, and worth nothing on restore: NAS only. Never a VM disk, never PBS.
-      - /mnt/nas/podarium/downloads:/downloads
-      - /mnt/nas/podarium/artwork:/artwork
+      # --- audio and artwork: local NVMe -------------------------------------------------
+      - /home/jworthington/docker/podarium/downloads:/downloads
+      - /home/jworthington/docker/podarium/artwork:/artwork
+      #
+      # --- to move audio to the NAS later, comment the two lines above and use these -----
+      # - /mnt/nas/podarium/downloads:/downloads
+      # - /mnt/nas/podarium/artwork:/artwork
+      #
+      # The NAS route needs the fstab mount from 192.168.1.42 with
+      #     noauto,x-systemd.automount,soft,timeo=100
+      # Do NOT add RequiresMountsFor= to the docker.service drop-in: combined with noauto
+      # it blocks Docker from ever starting.
     ports:
       - "8044:8044"
+
+# ---------------------------------------------------------------------------------------
+# AFTER DEPLOYING
+# ---------------------------------------------------------------------------------------
+#
+#  - Open http://192.168.1.30:8044 and sign in with the username and password above.
+#  - Settings -> Auto-download newest sets the global default. It is a target, not a floor:
+#    lowering it removes the excess on the next refresh, and 0 reclaims everything except
+#    queued, starred, and hand-picked downloads. Per-show values override it; blank inherits.
+#  - Settings -> Download directory ceiling is the backstop. Worth setting once you have
+#    seen a week of real usage.
+#  - Starred episodes are exempt from retention *and* from that ceiling, by design. They
+#    are the one thing here that grows without bound.
+#  - Migrate from PinePods with Settings -> Import OPML, then run both in parallel for a
+#    week. PinePods keeps its downloads at /mnt/nas/pinepods, so there is no conflict.
