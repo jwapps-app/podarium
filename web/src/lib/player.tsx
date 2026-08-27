@@ -11,7 +11,7 @@ import {
 import type { ReactNode } from "react";
 
 import { api } from "./api";
-import { useMediaSession } from "./mediaSession";
+import { shouldHonorPlatformResume, useMediaSession } from "./mediaSession";
 import type { Episode } from "./types";
 
 /** How often a playing episode reports its position back to the server. Frequent enough
@@ -100,6 +100,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Mirrored as state for display and held in a ref for the ended handler, which must
   // read the current value without the effect being torn down and rebuilt each time.
   const [sleepAtEnd, setSleepAtEnd] = useState(false);
+
+  // Whether audio has actually played since this page loaded.
+  //
+  // Restoring an episode on launch deliberately does not count. Until you press play,
+  // Podarium is holding an episode, not playing one -- and an app that is not the device's
+  // current audio app should not be registered with the platform as if it were. That
+  // registration is what a queued "play" from a finished phone call lands on when the page
+  // resumes, which is how opening the app could start playback by itself.
+  const [sessionActive, setSessionActive] = useState(false);
   const sleepAtEndRef = useRef(false);
 
   // Kept in refs so the reporting effect does not tear down and restart on every tick.
@@ -337,6 +346,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setPlaying(false);
     setPosition(0);
     setExpanded(false);
+    setSessionActive(false);
   }, [reportPosition]);
 
   const setSleepTimer = useCallback((minutes: number | "episode" | null) => {
@@ -390,7 +400,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const onPlay = () => setPlaying(true);
+    const onPlay = () => {
+      setPlaying(true);
+      setSessionActive(true);
+    };
     const onPause = () => {
       setPlaying(false);
       reportPosition(audio.currentTime, { force: true });
@@ -498,6 +511,36 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("pagehide", onUnload);
   }, []);
 
+  // When the page last came to the foreground, for the staleness check below.
+  const becameVisibleAtRef = useRef(Date.now());
+  useEffect(() => {
+    const mark = () => {
+      if (document.visibilityState === "visible") becameVisibleAtRef.current = Date.now();
+    };
+    mark();
+    document.addEventListener("visibilitychange", mark);
+    // A page restored from the back/forward cache never fires visibilitychange.
+    window.addEventListener("pageshow", mark);
+    return () => {
+      document.removeEventListener("visibilitychange", mark);
+      window.removeEventListener("pageshow", mark);
+    };
+  }, []);
+
+  /** Resume as asked by the platform rather than by the app's own controls. */
+  const platformResume = useCallback(() => {
+    if (
+      !shouldHonorPlatformResume(
+        Date.now(),
+        becameVisibleAtRef.current,
+        document.visibilityState === "visible",
+      )
+    ) {
+      return;
+    }
+    resume();
+  }, [resume]);
+
   rateRef.current = playbackRate;
 
   // Feeds carry the show name the lock screen shows as the artist, and the per-show speed
@@ -513,13 +556,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [feeds]);
 
   useMediaSession({
-    episode,
+    // Null until playback has begun, so there is no session for a stale action to reach.
+    episode: sessionActive ? episode : null,
     showTitle,
     playing,
     position,
     duration,
     playbackRate,
-    resume,
+    resume: platformResume,
     pause,
     skip,
     seek,

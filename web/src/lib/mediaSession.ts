@@ -41,6 +41,33 @@ interface Transport {
  *  a stray "pause" into playback starting on its own, which is precisely the bug this
  *  shape prevents.
  */
+/** How soon after the app becomes visible a platform "play" is treated as stale.
+ *
+ *  Long enough to catch an intent the OS queued while the page was suspended and flushed
+ *  the instant it resumed; short enough that a person who opens the app and reaches for a
+ *  hardware button is well past it.
+ */
+export const STALE_RESUME_WINDOW_MS = 1500;
+
+/** Whether a "play" action from the platform should actually start playback.
+ *
+ *  iOS sends "play" for reasons that have nothing to do with anyone pressing anything --
+ *  most usefully when a phone call ends, which is how a web app gets the resume-after-
+ *  interruption behaviour a native app gets for free. The catch is delivery: if the page
+ *  was suspended when the call ended, the action is not delivered then. It is delivered
+ *  when the page next runs, which is the moment the app is opened -- so an intent from an
+ *  hour ago arrives looking exactly like "start playing now".
+ *
+ *  A resume that late is not a resume, it is a surprise. So an action landing in the first
+ *  instant of the app becoming visible is dropped. One arriving while the app is in the
+ *  background is honoured untouched: that is the lock screen, headphones, or CarPlay, and
+ *  every one of those is a real request.
+ */
+export function shouldHonorPlatformResume(now: number, becameVisibleAt: number, visible: boolean): boolean {
+  if (!visible) return true;
+  return now - becameVisibleAt >= STALE_RESUME_WINDOW_MS;
+}
+
 export function mediaSessionHandlers(
   transport: Transport,
 ): [MediaSessionAction, MediaSessionActionHandler | null][] {
@@ -112,8 +139,12 @@ export function useMediaSession({
   }, [session, episode, showTitle]);
 
   // What its buttons do.
+  //
+  // Registered only alongside metadata, never before. An app holding an episode it has not
+  // played is not the device's current audio app, and should not be handed transport
+  // actions the platform generated for whatever it thinks is playing.
   useEffect(() => {
-    if (!session) return;
+    if (!session || !episode) return;
 
     const handlers = mediaSessionHandlers({ resume, pause, skip, seek, stop });
 
@@ -134,7 +165,7 @@ export function useMediaSession({
         }
       }
     };
-  }, [session, resume, pause, skip, seek, stop]);
+  }, [session, episode, resume, pause, skip, seek, stop]);
 
   useEffect(() => {
     if (!session) return;
