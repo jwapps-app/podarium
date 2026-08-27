@@ -109,13 +109,14 @@ work in that sentence.
 
 The stack therefore runs a nightly `pg_dump` into `/home/jworthington/docker/podarium/backups`,
 inside the tree vzdump already picks up, so the backup holds both the raw directory and a
-logically consistent dump. `scripts/pg-backup.sh` has to be on the host before the stack
-comes up — see the BACKUPS section at the bottom of the stack file.
+logically consistent dump. The service carries its own script inline — there is nothing to
+place on the host, and `docker restart podarium-backup` forces a dump immediately.
 
-Restoring one:
+Restore into a scratch database and compare before touching the live one; loading a dump
+into a populated database conflicts on every table it recreates.
 
 ```bash
-gunzip -c podarium-YYYYMMDD-HHMMSS.sql.gz | docker exec -i podarium-db psql -U podarium -d podarium
+gunzip -c podarium-YYYYMMDD-HHMMSS.sql.gz | docker exec -i podarium-db psql -U podarium -d restore_test
 ```
 
 What is in that database: subscriptions, every playback position, stars, the queue, and API

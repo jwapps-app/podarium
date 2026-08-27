@@ -81,8 +81,12 @@ services:
   # from that but not always. pg_dump reads inside a transaction and cannot have the
   # problem, so the backup ends up holding both the raw directory and a known-good dump.
   #
-  # Writes into the same tree vzdump already picks up, so there is nothing to configure on
-  # the Proxmox side.
+  # Written into the same tree vzdump already picks up, so there is nothing to configure on
+  # the Proxmox side. The script is inline rather than mounted from the host: this stack is
+  # pasted into Portainer, and a file that has to be placed on the host first is a step that
+  # can be forgotten or -- since this repository is private -- quietly 404.
+  #
+  # $$ escapes a literal $ so Compose leaves it for the shell instead of interpolating it.
   backup:
     image: postgres:18-alpine
     container_name: podarium-backup
@@ -92,13 +96,38 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://podarium:${DB_PASSWORD:?set DB_PASSWORD in the environment variables panel}@postgres:5432/podarium
+      # How many nightly dumps to keep.
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
     volumes:
       - /home/jworthington/docker/podarium/backups:/backups
-      - /home/jworthington/docker/podarium/pg-backup.sh:/usr/local/bin/pg-backup.sh:ro
-    # No cron in this image and no reason to add one: sleep, dump, repeat. A restart runs a
-    # dump immediately, which is the behaviour you want after touching the stack anyway.
-    entrypoint: ["/bin/sh", "-c", "while true; do /usr/local/bin/pg-backup.sh || echo 'backup failed'; sleep 86400; done"]
+    # No cron in this image and no reason to add one: dump, sleep, repeat. A restart runs a
+    # dump immediately, which is what you want after touching the stack anyway.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        while true; do
+          TS=$$(date +%Y%m%d-%H%M%S)
+          OUT="/backups/podarium-$$TS.sql.gz"
+          # Dumped to a file first rather than piped straight into gzip: this shell has no
+          # pipefail, so a failing pg_dump in a pipeline still reports gzip's success and
+          # would leave a valid archive of a truncated dump.
+          if pg_dump --no-owner --no-privileges "$$DATABASE_URL" > /tmp/podarium.sql; then
+            # .partial until it is complete, so a container killed mid-write cannot leave
+            # something that looks like a finished backup.
+            gzip -c /tmp/podarium.sql > "$$OUT.partial" && mv "$$OUT.partial" "$$OUT"
+            echo "backup: wrote $$(basename $$OUT) ($$(du -h $$OUT | cut -f1))"
+          else
+            echo "backup: pg_dump failed" >&2
+            rm -f "$$OUT.partial"
+          fi
+          rm -f /tmp/podarium.sql
+          # Keep the newest N. A read loop rather than xargs -r, which busybox does not
+          # reliably have.
+          ls -1t /backups/podarium-*.sql.gz 2>/dev/null | tail -n +$$((BACKUP_KEEP + 1)) |
+            while read -r old; do rm -f "$$old"; done
+          sleep 86400
+        done
 
   api:
     # Multi-architecture: the same tag resolves to amd64 or arm64 by host, so this line
@@ -186,17 +215,20 @@ services:
 # BACKUPS
 # ---------------------------------------------------------------------------------------
 #
-# The backup service needs its script on the host before the stack comes up. From the repo:
+# Nothing to install. The backup service carries its own script, and Docker creates
+# /home/jworthington/docker/podarium/backups on first start if it is not already there.
 #
-#     sudo mkdir -p /home/jworthington/docker/podarium/backups
-#     sudo curl -fsSL -o /home/jworthington/docker/podarium/pg-backup.sh \
-#       https://raw.githubusercontent.com/jwapps-app/podarium/main/scripts/pg-backup.sh
-#     sudo chmod +x /home/jworthington/docker/podarium/pg-backup.sh
+# Check it ran:     docker logs podarium-backup
+#                   ls -lh /home/jworthington/docker/podarium/backups
+# Force one now:    docker restart podarium-backup
 #
-# Check it worked:  ls -lh /home/jworthington/docker/podarium/backups
-# Restore one:      gunzip -c podarium-YYYYMMDD-HHMMSS.sql.gz | \
-#                     docker exec -i podarium-db psql -U podarium -d podarium
+# Restore into a scratch database and compare before touching the live one:
 #
-# Restoring into a database that already has tables will conflict -- drop and recreate it
-# first, or restore into a scratch database and compare. BACKUP_KEEP controls how many
-# nightly dumps are retained; the default is 14.
+#     docker exec podarium-db psql -U podarium -d podarium -c "create database restore_test"
+#     gunzip -c /home/jworthington/docker/podarium/backups/podarium-YYYYMMDD-HHMMSS.sql.gz \
+#       | docker exec -i podarium-db psql -U podarium -d restore_test
+#
+# Restoring over the live database needs it empty first -- the dump recreates the tables,
+# so loading it into a populated database conflicts on every one of them.
+#
+# BACKUP_KEEP controls how many nightly dumps are retained; the default is 14.
