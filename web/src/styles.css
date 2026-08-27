@@ -723,6 +723,10 @@ button.episode-title {
   flex-direction: column;
   background: var(--bg);
   overflow-y: auto;
+  /* Its own scroll container, so the clip on <body> does not reach it -- this view could
+     scroll sideways on its own. `clip` rather than `hidden` because the header inside is
+     position: sticky, which `hidden` would silently break. */
+  overflow-x: clip;
   overscroll-behavior: contain;
 }
 
@@ -1097,6 +1101,14 @@ button.player-title:hover { color: var(--accent); }
 }
 
 @media (max-width: 560px) {
+  /* Five controls do not fit a phone at the sizes three did: 4x52 + 66 + four 26px gaps is
+     378px, wider than the 375px screen this is written for. Tightened only when the chapter
+     arrows are actually present, so the ordinary three-control row keeps its full size. */
+  .np-transport.has-chapters { gap: 12px; }
+  .np-transport.has-chapters .np-skip { width: 44px; height: 44px; }
+  .np-transport.has-chapters .np-skip svg { width: 24px; height: 24px; }
+  .np-transport.has-chapters .np-play { width: 58px; height: 58px; }
+
   .player-center .player-buttons { display: none; }
 
   /* ...so the play button moves in beside the rate and stop controls. The bar can appear

@@ -153,7 +153,7 @@ export function NowPlaying() {
             </div>
           </div>
 
-          <div className="np-transport">
+          <div className={`np-transport${chapters.length > 1 ? " has-chapters" : ""}`}>
             {/* Only for episodes that actually have chapters. Two controls that do nothing
                 on all but a handful of episodes are clutter, not affordance. */}
             {chapters.length > 1 ? (
