@@ -171,13 +171,19 @@ async def stream_episode(
     return await _proxy_origin(episode, request, app_settings.user_agent)
 
 
-def _artwork_response(entry: ArtworkCache | None, request: Request) -> Response:
+def _artwork_response(
+    entry: ArtworkCache | None, request: Request, *, immutable: bool = False
+) -> Response:
     """Shared cache handling for every artwork route.
 
-    The URL is stable but its content is not: a publisher can change their cover art, and
-    /api/images/feed/2 then has to start returning a different image. So the response is
-    validated rather than cached blind, with the ETag keyed to the source URL's hash --
-    new art means a new hash means an immediate refetch.
+    Two policies, chosen by how the image is addressed. /api/images/feed/2 is addressed by
+    *object*: the mapping can change when a publisher swaps cover art, so it carries an
+    ETag keyed to the source URL's hash and revalidates hourly -- new art means a new hash
+    means a refetch, at worst an hour late. /api/images/cache/{hash} is addressed by
+    *content*: a given hash serves one image forever, so it is marked immutable and the
+    browser never asks again. Artwork dominates this app's request count -- a library page
+    is one JSON fetch and a tile's worth of images -- so the difference is most of the
+    requests a phone makes.
 
     "private" because these endpoints are behind auth and must not sit in a shared proxy.
     """
@@ -185,7 +191,12 @@ def _artwork_response(entry: ArtworkCache | None, request: Request) -> Response:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No artwork available")
 
     etag = f'"{entry.url_hash}"'
-    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=60, must-revalidate"}
+    policy = (
+        "private, max-age=31536000, immutable"
+        if immutable
+        else "private, max-age=3600, must-revalidate"
+    )
+    cache_headers = {"ETag": etag, "Cache-Control": policy}
 
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers=cache_headers)
@@ -216,7 +227,7 @@ async def get_cached_image(
 
     app_settings = await get_app_settings(session)
     entry = await artwork_by_hash(session, url_hash, user_agent=app_settings.user_agent)
-    return _artwork_response(entry, request)
+    return _artwork_response(entry, request, immutable=True)
 
 
 @router.get("/images/{kind}/{object_id}")

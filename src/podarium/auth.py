@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+from datetime import UTC, datetime, timedelta
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, VerificationError, InvalidHashError
@@ -25,6 +26,9 @@ from podarium.models import ApiToken, User
 log = logging.getLogger(__name__)
 
 _hasher = PasswordHasher()
+
+# How stale a token's last_used_at may be before it is worth a write to refresh.
+LAST_USED_GRANULARITY = timedelta(minutes=15)
 
 
 def hash_password(password: str) -> str:
@@ -108,10 +112,18 @@ async def current_user(
             )
         ).scalar_one_or_none()
         if token is not None:
-            token.last_used_at = func.now()
             user = await session.get(User, token.user_id)
             if user is not None:
-                await session.commit()
+                # last_used_at answers "is this device still in use", which is a
+                # day-granularity question. Stamping it on every call would put a write
+                # and a commit inside every authenticated request a device makes -- for a
+                # phone syncing on a timer, thousands of writes a day recording nothing.
+                last = token.last_used_at
+                if last is not None and last.tzinfo is None:
+                    last = last.replace(tzinfo=UTC)
+                if last is None or datetime.now(UTC) - last > LAST_USED_GRANULARITY:
+                    token.last_used_at = func.now()
+                    await session.commit()
                 return user
 
     raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")

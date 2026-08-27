@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.models import (
@@ -81,13 +82,28 @@ async def mark_all_feeds_seen(session: AsyncSession, user_id: int) -> int:
 
     Active only, matching the nav badge, which sums active feeds. A soft-unsubscribed show
     is not something the inbox is offering you.
+
+    One upsert rather than a get-or-create per feed: this runs on opening the inbox, and
+    a round trip per subscription is the shape of query that stays invisible at four shows
+    and shows up as inbox lag at forty.
     """
-    feeds = (
+    now = datetime.now(UTC)
+    feed_ids = (
         await session.execute(select(Feed.id).where(Feed.active.is_(True)))
     ).scalars().all()
-    for feed_id in feeds:
-        await mark_feed_seen(session, user_id, feed_id)
-    return len(feeds)
+    if not feed_ids:
+        return 0
+
+    statement = pg_insert(FeedState).values(
+        [{"user_id": user_id, "feed_id": feed_id, "last_seen_at": now} for feed_id in feed_ids]
+    )
+    await session.execute(
+        statement.on_conflict_do_update(
+            index_elements=[FeedState.user_id, FeedState.feed_id],
+            set_={"last_seen_at": statement.excluded.last_seen_at},
+        )
+    )
+    return len(feed_ids)
 
 
 async def get_app_settings(session: AsyncSession) -> AppSettings:

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../lib/api";
 import { formatClock, formatDate, formatDuration } from "../lib/format";
-import { PLAYBACK_RATES, usePlayer } from "../lib/player";
+import { PLAYBACK_RATES, usePlayer, usePlayerProgress } from "../lib/player";
 import { useEpisodeActions, useFeeds, useQueue } from "../lib/queries";
 import { sanitizeHtml } from "../lib/sanitize";
 import { podlinkEpisodeUrl } from "../lib/share";
@@ -31,12 +31,23 @@ import {
  */
 export function NowPlaying() {
   const player = usePlayer();
+  const progress = usePlayerProgress();
   const actions = useEpisodeActions();
   const { data: feeds } = useFeeds();
   const { data: queue } = useQueue();
 
   const episode = player.episode;
   const open = player.expanded && episode !== null;
+
+  // Lists arrive without show notes, so an episode played from one carries none; fetch
+  // the full record when the view is open. Hooks run before the early return below.
+  const { data: full } = useQuery({
+    queryKey: ["episode", episode?.id],
+    queryFn: () => api.episode(episode!.id),
+    enabled: open && episode !== null && episode.description_html == null,
+    staleTime: 5 * 60_000,
+  });
+  const notesHtml = episode?.description_html ?? full?.description_html;
 
   useEffect(() => {
     if (!open) return;
@@ -56,8 +67,8 @@ export function NowPlaying() {
   if (!open || !episode) return null;
 
   const feed = feeds?.find((candidate) => candidate.id === episode.feed_id);
-  const duration = player.duration || episode.duration_seconds || 0;
-  const percent = duration > 0 ? (player.position / duration) * 100 : 0;
+  const duration = progress.duration || episode.duration_seconds || 0;
+  const percent = duration > 0 ? (progress.position / duration) * 100 : 0;
   const queued = new Set((queue ?? []).map((item) => item.episode_id)).has(episode.id);
   const shareUrl = podlinkEpisodeUrl(feed?.feed_url, episode.guid);
 
@@ -119,14 +130,14 @@ export function NowPlaying() {
               min={0}
               max={Math.max(duration, 1)}
               step={1}
-              value={Math.min(player.position, duration || 1)}
+              value={Math.min(progress.position, duration || 1)}
               style={{ ["--progress" as string]: `${percent}%` }}
               onChange={(event) => player.seek(Number(event.target.value))}
               aria-label="Seek"
             />
             <div className="np-times">
-              <span>{formatClock(player.position)}</span>
-              <span>−{formatClock(Math.max(duration - player.position, 0))}</span>
+              <span>{formatClock(progress.position)}</span>
+              <span>−{formatClock(Math.max(duration - progress.position, 0))}</span>
             </div>
           </div>
 
@@ -244,13 +255,13 @@ export function NowPlaying() {
 
           <ChapterList episodeId={episode.id} />
 
-          {episode.description_html ? (
+          {notesHtml ? (
             <section className="np-section">
               <h2 className="np-section-title">Show notes</h2>
               <div
                 className="episode-notes"
                 /* Sanitised: an <img> in a publisher's notes would fetch from their CDN. */
-                dangerouslySetInnerHTML={{ __html: sanitizeHtml(episode.description_html) }}
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(notesHtml) }}
               />
             </section>
           ) : null}
@@ -314,6 +325,7 @@ function SleepTimerButton() {
  */
 function ChapterList({ episodeId }: { episodeId: number }) {
   const player = usePlayer();
+  const progress = usePlayerProgress();
   const { data } = useQuery({
     queryKey: ["chapters", episodeId],
     queryFn: () => api.chapters(episodeId),
@@ -327,7 +339,7 @@ function ChapterList({ episodeId }: { episodeId: number }) {
   // The chapter containing the playhead, i.e. the last one that has started.
   let currentIndex = -1;
   chapters.forEach((chapter, index) => {
-    if (player.position >= chapter.start_seconds) currentIndex = index;
+    if (progress.position >= chapter.start_seconds) currentIndex = index;
   });
 
   return (

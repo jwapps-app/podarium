@@ -193,8 +193,10 @@ export const api = {
   markAllFeedsSeen: () => request<void>("/api/feeds/seen", { method: "POST" }),
 
   // -- episodes ------------------------------------------------------------
+  // notes=false: description_html is over half the payload of a typical page and a list
+  // renders none of it until a row is expanded -- the row fetches the single episode then.
   episodes: (filters: EpisodeFilters = {}) =>
-    request<EpisodeList>(`/api/episodes${query({ ...filters })}`),
+    request<EpisodeList>(`/api/episodes${query({ ...filters, notes: false })}`),
 
   episode: (id: number) => request<Episode>(`/api/episodes/${id}`),
 

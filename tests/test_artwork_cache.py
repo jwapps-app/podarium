@@ -66,6 +66,23 @@ async def test_artwork_is_served_with_a_validating_etag(client):
     assert "public" not in cache_control
 
 
+async def test_hash_addressed_artwork_is_immutable(client):
+    """The two routes carry different cache policies because they are addressed
+    differently. /api/images/feed/2 is addressed by object -- the mapping changes when a
+    publisher swaps art, so it revalidates. /api/images/cache/{hash} is addressed by
+    content -- a hash serves one image forever, so the browser is told never to ask again.
+    Artwork dominates the app's request count, so this is most of a phone's requests."""
+    response = await client.get(f"/api/images/cache/{client.digest}")
+
+    assert response.status_code == 200
+    cache_control = response.headers["cache-control"]
+    assert "immutable" in cache_control
+    assert "public" not in cache_control
+
+    object_addressed = await client.get(f"/api/images/feed/{client.feed_id}")
+    assert "immutable" not in object_addressed.headers["cache-control"]
+
+
 async def test_matching_etag_returns_304(client):
     etag = f'"{client.digest}"'
     response = await client.get(

@@ -30,9 +30,6 @@ export const PLAYBACK_RATES = [0.8, 0.9, 1, 1.1, 1.2, 1.25, 1.5, 1.75, 2, 2.5, 3
 interface PlayerValue {
   episode: Episode | null;
   playing: boolean;
-  /** Live position in seconds, updated as it plays. */
-  position: number;
-  duration: number;
   buffering: boolean;
   error: string | null;
   playbackRate: number;
@@ -57,6 +54,20 @@ interface PlayerValue {
 }
 
 const PlayerContext = createContext<PlayerValue | null>(null);
+
+/** The one part of the player that changes every second.
+
+    Its own context, because the main one is consumed by every episode row on screen: with
+    position in there, each tick of playback re-rendered a hundred rows that display
+    nothing time-related. Only the two surfaces that actually draw a clock -- the bar and
+    the full view -- subscribe to this one. */
+interface PlayerProgressValue {
+  /** Live position in seconds, ticking once a second while playing. */
+  position: number;
+  duration: number;
+}
+
+const PlayerProgressContext = createContext<PlayerProgressValue | null>(null);
 
 /** Hoisted so the query key is a stable reference across renders. */
 const RESUME_FILTERS = { in_progress: true, limit: 1 } as const;
@@ -130,6 +141,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...(options.played === undefined ? {} : { played: options.played }),
         })
         .then(() => {
+          // Only a state *transition* is worth refetching lists over. The routine
+          // five-second position report used to invalidate too, which made an open inbox
+          // refetch its full payload every five seconds for the whole length of an
+          // episode -- megabytes an hour on a phone, for a progress bar nobody was
+          // watching. Rows catch up on the next natural refetch; a pause, a played mark,
+          // or switching episodes (all force or played) still refresh immediately.
+          if (options.played === undefined && !options.force) return;
           queryClient.invalidateQueries({ queryKey: ["episodes"] });
           queryClient.invalidateQueries({ queryKey: ["feeds"] });
         })
@@ -359,7 +377,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setPlaying(false);
       reportPosition(audio.currentTime, { force: true });
     };
-    const onTimeUpdate = () => setPosition(audio.currentTime);
+    // Whole seconds only. timeupdate fires around four times a second, and every one
+    // was a React state change re-rendering every consumer of the player context; the
+    // display is in whole seconds anyway, so the extra ticks bought nothing.
+    const onTimeUpdate = () => {
+      setPosition((current) =>
+        Math.floor(current) === Math.floor(audio.currentTime) ? current : audio.currentTime,
+      );
+    };
     const onDuration = () => {
       if (Number.isFinite(audio.duration)) setDuration(audio.duration);
     };
@@ -486,8 +511,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     () => ({
       episode,
       playing,
-      position,
-      duration,
       buffering,
       error,
       playbackRate,
@@ -505,13 +528,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setSleepTimer,
     }),
     [
-      episode, playing, position, duration, buffering, error, playbackRate, expanded,
+      episode, playing, buffering, error, playbackRate, expanded,
       play, toggle, seek, skip, setPlaybackRate, stop, setAdvanceHandler,
       sleepMinutes, sleepAtEnd, setSleepTimer,
     ],
   );
 
-  return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
+  const progress = useMemo(() => ({ position, duration }), [position, duration]);
+
+  return (
+    <PlayerContext.Provider value={value}>
+      <PlayerProgressContext.Provider value={progress}>
+        {children}
+      </PlayerProgressContext.Provider>
+    </PlayerContext.Provider>
+  );
+}
+
+export function usePlayerProgress(): PlayerProgressValue {
+  const value = useContext(PlayerProgressContext);
+  if (!value) throw new Error("usePlayerProgress must be used inside PlayerProvider");
+  return value;
 }
 
 export function usePlayer(): PlayerValue {

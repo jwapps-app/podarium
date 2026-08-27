@@ -94,6 +94,7 @@ async def list_episodes(
     starred: bool | None = Query(default=None),
     in_progress: bool | None = Query(default=None),
     q: str | None = Query(default=None, max_length=200),
+    notes: bool = Query(default=True),
     since: datetime | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None),
@@ -107,6 +108,11 @@ async def list_episodes(
     make an archive look new.
 
     ``in_progress`` is the exception, and orders by when you last listened instead.
+
+    ``notes=false`` omits ``description_html``. It is well over half the payload of a
+    typical page and a list renders none of it until a row is expanded, at which point the
+    client fetches the single episode. The default stays ``true`` so the existing contract
+    -- and any client that renders notes straight from the list -- is unchanged.
     """
     state = aliased(EpisodeState)
 
@@ -203,6 +209,9 @@ async def list_episodes(
     rows = rows[:limit]
 
     items = [episode_out(episode, episode_state) for episode, episode_state, _ in rows]
+    if not notes:
+        for item in items:
+            item.description_html = None
     next_cursor = encode_cursor(rows[-1][2], rows[-1][0].id) if has_more and rows else None
     return EpisodeListOut(items=items, next_cursor=next_cursor)
 

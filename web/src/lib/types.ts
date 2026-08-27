@@ -193,6 +193,8 @@ export interface EpisodeFilters {
   in_progress?: boolean;
   /** Free text over episode title, show title, and description. */
   q?: string;
+  /** false omits description_html from list responses; rows fetch it on expand. */
+  notes?: boolean;
   since?: string;
   limit?: number;
   cursor?: string;

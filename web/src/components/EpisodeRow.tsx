@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
+import { api } from "../lib/api";
 import { usePlayer } from "../lib/player";
 import { useOffline } from "../lib/offlineStore";
 import { useEpisodeActions } from "../lib/queries";
@@ -37,6 +39,16 @@ export function EpisodeRow({ episode, showTitle, feedUrl, queued, isNew }: Props
   const player = usePlayer();
   const actions = useEpisodeActions();
   const [expanded, setExpanded] = useState(false);
+
+  // Lists arrive without show notes (they are most of the payload), so the first expand
+  // fetches this one episode. Anything already carrying notes renders them directly.
+  const { data: full } = useQuery({
+    queryKey: ["episode", episode.id],
+    queryFn: () => api.episode(episode.id),
+    enabled: expanded && episode.description_html == null,
+    staleTime: 5 * 60_000,
+  });
+  const notesHtml = episode.description_html ?? full?.description_html;
   const shareUrl = podlinkEpisodeUrl(feedUrl, episode.guid);
 
   const offline = useOffline();
@@ -121,12 +133,12 @@ export function EpisodeRow({ episode, showTitle, feedUrl, queued, isNew }: Props
           </div>
         ) : null}
 
-        {expanded ? (
+        {expanded && notesHtml ? (
           <div
             className="episode-notes"
             /* Sanitised in sanitize.ts: every subresource-fetching element is stripped so
                show notes cannot pull an image straight from a publisher CDN. */
-            dangerouslySetInnerHTML={{ __html: sanitizeHtml(episode.description_html) }}
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(notesHtml) }}
           />
         ) : null}
       </div>
