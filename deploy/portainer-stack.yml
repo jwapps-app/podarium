@@ -237,6 +237,12 @@ services:
 # Nothing to install. The backup service carries its own script, and Docker creates
 # /home/jworthington/docker/podarium/backups on first start if it is not already there.
 #
+# Which build am I running?
+#     docker logs podarium-api 2>&1 | grep "starting, build"
+# prints "Podarium 0.1.0 starting, build <commit>". Compare that commit against the repo to
+# confirm a repull actually took effect. A restart appends another line, so the last one is
+# the running build.
+#
 # Check it ran:     docker logs podarium-backup
 #                   ls -lh /home/jworthington/docker/podarium/backups
 # Force one now:    docker restart podarium-backup

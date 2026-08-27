@@ -40,10 +40,16 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # ---------------------------------------------------------------- runtime
 FROM python:3.12-slim-bookworm
 
+# Which commit produced this image. Stamped by CI and logged on every boot, so
+# "did my repull actually take?" is answerable from the host without guessing at
+# timestamps -- a question that came up twice before this existed.
+ARG GIT_SHA=unknown
+
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    WEB_DIR=/app/web
+    WEB_DIR=/app/web \
+    PODARIUM_BUILD=$GIT_SHA
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl && \

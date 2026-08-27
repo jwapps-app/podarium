@@ -52,6 +52,13 @@ log = logging.getLogger("podarium")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
+
+    # Logged on every boot so that "is the code I just deployed actually running?" is
+    # answerable directly, rather than by comparing container and image timestamps and
+    # hoping. Not the very first line -- the web-UI line is emitted at import, before the
+    # lifespan runs -- so grep for it rather than taking the head of the log.
+    log.info("Podarium %s starting, build %s", __version__, settings.podarium_build)
+
     settings.download_dir.mkdir(parents=True, exist_ok=True)
     settings.artwork_dir.mkdir(parents=True, exist_ok=True)
 

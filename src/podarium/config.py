@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     # Set false in tests so the app does not spawn background jobs.
     run_background_jobs: bool = True
 
+    # The commit this image was built from, stamped by CI. "dev" when running from source.
+    podarium_build: str = "dev"
+
     @property
     def podcastindex_configured(self) -> bool:
         return bool(self.podcastindex_key and self.podcastindex_secret)
