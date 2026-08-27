@@ -66,6 +66,15 @@ async def subscribe(
             detail="This server has no VAPID keys, so push is disabled",
         )
 
+    # Every real push service is https, and this URL is one the server will POST to on a
+    # schedule from inside the network. Accepting anything else would store a standing
+    # instruction to deliver requests wherever the subscriber pointed.
+    if not body.endpoint.startswith("https://"):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Push endpoints must be https",
+        )
+
     existing = (
         await session.execute(
             select(PushSubscription).where(PushSubscription.endpoint == body.endpoint)

@@ -83,12 +83,18 @@ async def ensure_artwork(session: AsyncSession, source_url: str, *, user_agent: 
 
         try:
             async with build_client(user_agent) as client:
-                response = await client.get(source_url)
-                response.raise_for_status()
-                payload = response.content
-                if len(payload) > MAX_ARTWORK_BYTES:
-                    raise ValueError(f"artwork too large: {len(payload)} bytes")
-                content_type = response.headers.get("content-type")
+                # Streamed with the ceiling enforced as bytes arrive. Checking len() after
+                # a full read enforced the limit on storage but not on memory -- the whole
+                # oversized body was already held before the check ran.
+                async with client.stream("GET", source_url) as response:
+                    response.raise_for_status()
+                    buffer = bytearray()
+                    async for chunk in response.aiter_bytes(chunk_size=65536):
+                        buffer.extend(chunk)
+                        if len(buffer) > MAX_ARTWORK_BYTES:
+                            raise ValueError(f"artwork too large: over {MAX_ARTWORK_BYTES} bytes")
+                    payload = bytes(buffer)
+                    content_type = response.headers.get("content-type")
 
             path = _target_path(digest, content_type)
             path.parent.mkdir(parents=True, exist_ok=True)

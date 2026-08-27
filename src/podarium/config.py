@@ -48,6 +48,25 @@ class Settings(BaseSettings):
     retention_sweep_minutes: int = 60
     http_timeout_seconds: float = 30.0
 
+    # The most a single audio download may occupy. A malicious or broken publisher can
+    # otherwise stream forever and fill the disk. Three hours of 320kbps audio is about
+    # 450 MB; two gigabytes is comfortably above any real episode.
+    download_max_bytes: int = 2_000_000_000
+
+    # Refuse outbound fetches to loopback and private-range addresses. Feed, artwork,
+    # enclosure and chapter URLs are all publisher-controlled once a feed is subscribed,
+    # and without this a malicious feed can point them at hosts inside the LAN -- the
+    # router, Portainer, the NAS -- and have this server fetch them. Checked against
+    # literal IPs and localhost names; a hostname that *resolves* somewhere private is not
+    # caught (DNS rebinding), so this is a guard, not a boundary. Set true for a
+    # deployment that genuinely hosts feeds on its own network.
+    allow_private_fetch: bool = False
+
+    # When set, GET /metrics requires "Authorization: Bearer <this>". Unset, the endpoint
+    # stays open -- fine on a LAN, but through a public hostname it hands operational
+    # detail to anyone who asks.
+    metrics_token: str | None = None
+
     # Set false in tests so the app does not spawn background jobs.
     run_background_jobs: bool = True
 

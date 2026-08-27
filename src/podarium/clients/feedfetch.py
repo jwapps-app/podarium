@@ -220,6 +220,10 @@ async def resolve_feed_url(url: str, *, user_agent: str) -> str | None:
         return None
 
 
+# The most feed XML one fetch may hold in memory. Publisher-controlled input.
+MAX_FEED_BYTES = 30 * 1024 * 1024
+
+
 async def fetch_feed(
     feed_url: str,
     *,
@@ -235,7 +239,20 @@ async def fetch_feed(
         headers["If-Modified-Since"] = last_modified
 
     async with build_client(user_agent) as client:
-        response = await client.get(feed_url, headers=headers)
+        async with client.stream("GET", feed_url, headers=headers) as response:
+            if response.status_code != httpx.codes.NOT_MODIFIED:
+                response.raise_for_status()
+                # Read with a ceiling rather than trusting Content-Length: the body is
+                # publisher-controlled, and an endless stream would otherwise be held in
+                # memory until the process died. The largest real feeds -- full back
+                # catalogues on Megaphone or Libsyn -- run a few megabytes.
+                body = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    body.extend(chunk)
+                    if len(body) > MAX_FEED_BYTES:
+                        raise ValueError(
+                            f"feed exceeds {MAX_FEED_BYTES // (1024 * 1024)} MB; refusing to parse it"
+                        )
 
     if response.status_code == httpx.codes.NOT_MODIFIED:
         # final_url is reported here too. An unchanged feed still tells us where it serves
@@ -248,11 +265,10 @@ async def fetch_feed(
             final_url=str(response.url),
         )
 
-    response.raise_for_status()
     return FetchResult(
         status_code=response.status_code,
         etag=response.headers.get("etag"),
         last_modified=response.headers.get("last-modified"),
-        parsed=parse_feed_bytes(response.content),
+        parsed=parse_feed_bytes(bytes(body)),
         final_url=str(response.url),
     )

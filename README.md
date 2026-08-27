@@ -138,6 +138,27 @@ gunzip -c podarium-YYYYMMDD-HHMMSS.sql.gz | docker exec -i podarium-db psql -U p
 What is in that database: subscriptions, every playback position, stars, the queue, and API
 tokens. The audio can be downloaded again; none of that can.
 
+## Security posture
+
+Auth: argon2 passwords, optional TOTP, throttled login, httpOnly session cookie
+(SameSite=Lax), bearer tokens stored as SHA-256. Publisher HTML is sanitised with an
+allowlist, and a strict Content-Security-Policy backs the sanitiser up: even markup it
+missed cannot run script or fetch from a publisher host in a browser that honours CSP.
+
+Everything a publisher controls is bounded. Feed documents, artwork and chapter files are
+read with hard size ceilings enforced while the bytes arrive; a single download may not
+exceed `DOWNLOAD_MAX_BYTES` (default 2 GB), so a hostile feed cannot fill the disk. Outbound
+fetches refuse literal private and loopback addresses -- once a feed is subscribed, its
+enclosure and artwork URLs are the publisher's to choose, and without the guard a malicious
+feed could point this server at the router, Portainer, or the NAS. The guard checks literal
+IPs and localhost names only; it does not resolve hostnames, so DNS rebinding is out of its
+scope. `ALLOW_PRIVATE_FETCH=true` disables it for a deployment that hosts feeds on its own
+network (the dev `.env` sets it, so local verification can preview its own server).
+
+`/metrics` is open by default for a same-LAN Prometheus. Through a public hostname, set
+`METRICS_TOKEN` and give the scrape job `authorization: Bearer <token>` -- or block the
+path at Cloudflare.
+
 ## Locked out
 
 Two-factor codes are checked against a secret stored encrypted with a key derived from

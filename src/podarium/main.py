@@ -114,6 +114,45 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Podarium", version=__version__, lifespan=lifespan)
 
 
+# One policy for every response. The app serves publisher-authored HTML (sanitised, but
+# defence assumes the sanitiser has a bad day), so the browser is told what this page is
+# allowed to do regardless of what makes it into the DOM.
+#
+# style-src keeps 'unsafe-inline' because React writes style attributes; script-src does
+# not, which is the part that matters -- an injected <script> or javascript: URL is dead
+# on arrival. Everything loads from this origin only, which is also a second enforcement
+# of the design invariant: a browser that honours CSP cannot be made to fetch from a
+# publisher host even by markup the sanitiser missed.
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "media-src 'self'; "
+        "connect-src 'self'; "
+        "worker-src 'self'; "
+        "manifest-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'none'; "
+        "form-action 'self'; "
+        "frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    for name, value in _SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    return response
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
     """Uniform error envelope: {"error": {"code", "message"}} (spec 6)."""
@@ -185,6 +224,10 @@ if _web_root.is_dir() and (_web_root / "index.html").is_file():
 
         candidate = (_web_root / path).resolve()
         if path and _web_root.resolve() in candidate.parents and candidate.is_file():
+            if path == "sw.js":
+                # The service worker script must revalidate on every check, or a deploy
+                # waits out the HTTP cache before browsers pick up the new worker.
+                return FileResponse(candidate, headers={"Cache-Control": "no-cache"})
             return FileResponse(candidate)
 
         return FileResponse(_index, headers={"Cache-Control": "no-cache"})

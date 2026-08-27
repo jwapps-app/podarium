@@ -1,9 +1,12 @@
-from fastapi import APIRouter, Depends, Response
+import hmac
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import SQLAlchemyError
 
+from podarium.config import get_settings
 from podarium.db import get_session
 from podarium.metrics import (
     download_dir_bytes,
@@ -29,8 +32,19 @@ async def healthz(session: AsyncSession = Depends(get_session)) -> Response:
 
 
 @router.get("/metrics")
-async def metrics(session: AsyncSession = Depends(get_session)) -> Response:
-    """Gauges are sampled at scrape time; counters are incremented by the jobs themselves."""
+async def metrics(request: Request, session: AsyncSession = Depends(get_session)) -> Response:
+    """Gauges are sampled at scrape time; counters are incremented by the jobs themselves.
+
+    Open by default, because a Prometheus on the same LAN is the expected consumer. Once
+    METRICS_TOKEN is set the scrape must carry it as a bearer token -- through a public
+    hostname, an open /metrics hands queue depths and byte counts to anyone who asks.
+    """
+    expected = get_settings().metrics_token
+    if expected:
+        header = request.headers.get("authorization", "")
+        supplied = header[7:].strip() if header.lower().startswith("bearer ") else ""
+        if not hmac.compare_digest(supplied, expected):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="metrics token required")
     depth = (
         await session.execute(
             select(func.count())

@@ -105,10 +105,17 @@ async def ensure_chapters(
 
     try:
         async with build_client(user_agent) as client:
-            response = await client.get(episode.chapters_url)
-            response.raise_for_status()
-            raw = response.text[:MAX_BYTES]
-    except (httpx.HTTPError, UnicodeDecodeError) as exc:
+            # Streamed with the cap enforced during the read; text[:MAX] would have
+            # downloaded and decoded the whole body first, cap or no cap.
+            async with client.stream("GET", episode.chapters_url) as response:
+                response.raise_for_status()
+                buffer = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    buffer.extend(chunk)
+                    if len(buffer) > MAX_BYTES:
+                        raise ValueError(f"chapters file exceeds {MAX_BYTES} bytes")
+                raw = bytes(buffer).decode("utf-8", errors="replace")
+    except (httpx.HTTPError, ValueError) as exc:
         log.info("chapters fetch failed for %s: %s", episode.chapters_url, exc)
         await session.commit()
         return []

@@ -124,16 +124,30 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
         path.parent.mkdir(parents=True, exist_ok=True)
         written = 0
         declared_length: int | None = None
+        # The one bound on how much disk a single job may take. The body is
+        # publisher-controlled, and without a ceiling a broken or hostile server can
+        # stream forever and fill the volume the database shares.
+        max_bytes = get_settings().download_max_bytes
         async with build_client(user_agent) as client:
             async with client.stream("GET", episode.enclosure_url) as response:
                 response.raise_for_status()
                 raw_length = response.headers.get("content-length")
                 if raw_length and raw_length.isdigit():
                     declared_length = int(raw_length)
+                    if declared_length > max_bytes:
+                        raise ValueError(
+                            f"enclosure declares {declared_length} bytes, over the "
+                            f"{max_bytes} byte limit (DOWNLOAD_MAX_BYTES)"
+                        )
                 with partial.open("wb") as handle:
                     async for chunk in response.aiter_bytes(chunk_size=256 * 1024):
                         handle.write(chunk)
                         written += len(chunk)
+                        if written > max_bytes:
+                            raise ValueError(
+                                f"download exceeded the {max_bytes} byte limit "
+                                "(DOWNLOAD_MAX_BYTES)"
+                            )
 
         if written == 0:
             raise ValueError("empty response body")
