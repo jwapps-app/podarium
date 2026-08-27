@@ -27,6 +27,9 @@
 #         PODCASTINDEX_SECRET  from your local .env -- optional
 #         PUBLIC_URL           optional; defaults to http://192.168.1.30:8044
 #                              set to https://<hostname> once Cloudflare fronts it
+#         VAPID_*              optional; notifications stay off without them. See
+#                              NOTIFICATIONS at the bottom.
+#         BACKUP_KEEP          optional; nightly dumps to retain, default 14
 #
 #     The four with :? are required and fail the deploy loudly if unset. Leaving the
 #     Podcast Index pair out is fine: search returns a clean 503 and the UI says so, while
@@ -241,3 +244,23 @@ services:
 # so loading it into a populated database conflicts on every one of them.
 #
 # BACKUP_KEEP controls how many nightly dumps are retained; the default is 14.
+
+# ---------------------------------------------------------------------------------------
+# NOTIFICATIONS
+# ---------------------------------------------------------------------------------------
+#
+# Optional, and off until the server has a VAPID keypair. Generate one:
+#
+#     docker exec podarium-api python -m podarium.vapid
+#
+# It prints three KEY=value lines. Paste them into the environment variables panel and
+# redeploy. The private key is base64 rather than a PEM on purpose: a PEM is multi-line and
+# full of slashes, which is the shape that arrives truncated through a panel like this one.
+#
+# Then Settings -> Notifications -> Turn on, and "Send a test" to prove it end to end.
+#
+# On iOS this only works once Podarium has been added to the Home Screen, and only over
+# HTTPS -- so through the Cloudflare hostname, not the LAN address.
+#
+# Browsers pin the public key when a device subscribes. Replacing the pair silently breaks
+# every existing subscription, and each device has to turn notifications on again.
