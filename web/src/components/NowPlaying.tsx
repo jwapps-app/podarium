@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../lib/api";
+import { nextChapterTarget, previousChapterTarget } from "../lib/chapters";
 import { formatClock, formatDate, formatDuration } from "../lib/format";
 import { PLAYBACK_RATES, usePlayer, usePlayerProgress } from "../lib/player";
 import { useEpisodeActions, useFeeds, useQueue } from "../lib/queries";
@@ -16,9 +17,11 @@ import {
   ChevronDownIcon,
   DownloadIcon,
   Forward30Icon,
+  NextChapterIcon,
   PauseIcon,
   PlayIcon,
   PlusIcon,
+  PrevChapterIcon,
   StarIcon,
   TrashIcon,
 } from "./Icons";
@@ -48,6 +51,15 @@ export function NowPlaying() {
     staleTime: 5 * 60_000,
   });
   const notesHtml = episode?.description_html ?? full?.description_html;
+
+  // Same query key as the list in the side panel, so this is one fetch, not two.
+  const { data: chapterData } = useQuery({
+    queryKey: ["chapters", episode?.id],
+    queryFn: () => api.chapters(episode!.id),
+    enabled: open && episode !== null,
+    staleTime: Infinity,
+  });
+  const chapters = chapterData?.chapters ?? [];
 
   useEffect(() => {
     if (!open) return;
@@ -142,6 +154,22 @@ export function NowPlaying() {
           </div>
 
           <div className="np-transport">
+            {/* Only for episodes that actually have chapters. Two controls that do nothing
+                on all but a handful of episodes are clutter, not affordance. */}
+            {chapters.length > 1 ? (
+              <button
+                className="btn-icon np-skip"
+                onClick={() => {
+                  const target = previousChapterTarget(chapters, progress.position);
+                  if (target !== null) player.seek(target);
+                }}
+                aria-label="Previous chapter"
+                title="Previous chapter"
+              >
+                <PrevChapterIcon />
+              </button>
+            ) : null}
+
             <button
               className="btn-icon np-skip"
               onClick={() => player.skip(-10)}
@@ -173,6 +201,23 @@ export function NowPlaying() {
             >
               <Forward30Icon />
             </button>
+
+            {chapters.length > 1 ? (
+              <button
+                className="btn-icon np-skip"
+                // Disabled in the last chapter rather than hidden, so the row does not
+                // reflow under your thumb as the episode plays past the final boundary.
+                disabled={nextChapterTarget(chapters, progress.position) === null}
+                onClick={() => {
+                  const target = nextChapterTarget(chapters, progress.position);
+                  if (target !== null) player.seek(target);
+                }}
+                aria-label="Next chapter"
+                title="Next chapter"
+              >
+                <NextChapterIcon />
+              </button>
+            ) : null}
           </div>
 
           <div className="np-actions">

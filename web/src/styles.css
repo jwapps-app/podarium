@@ -255,6 +255,10 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 
 .btn-icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--text); }
 
+/* .btn has a disabled style; .btn-icon did not, so the next-chapter control looked live
+   in the final chapter. */
+.btn-icon:disabled { opacity: 0.35; cursor: not-allowed; }
+
 .btn-icon.on { color: var(--accent); }
 
 .btn-icon svg { width: 17px; height: 17px; }

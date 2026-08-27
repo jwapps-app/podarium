@@ -107,6 +107,16 @@ export const ShareIcon = (p: Props) => (
   <svg {...base} {...p}><path d="M12 3v13" /><path d="m7.5 7.5 4.5-4.5 4.5 4.5" /><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" /></svg>
 );
 
+/* Chapter skip. A bar against a triangle -- the "jump to a boundary" shape, deliberately
+   unlike the ±10/30 arcs, which mean "nudge by a fixed amount". */
+export const PrevChapterIcon = (p: Props) => (
+  <svg {...base} {...p}><path d="M18 5.5v13L8.5 12z" /><path d="M6 5.5v13" /></svg>
+);
+
+export const NextChapterIcon = (p: Props) => (
+  <svg {...base} {...p}><path d="M6 5.5v13L15.5 12z" /><path d="M18 5.5v13" /></svg>
+);
+
 /* A phone. Distinct from DownloadIcon on purpose: that one means "fetch to the server",
    this one means "keep on this device", and they are genuinely different actions. */
 export const DeviceIcon = (p: Props) => (
