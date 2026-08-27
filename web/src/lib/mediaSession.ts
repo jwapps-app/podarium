@@ -16,10 +16,52 @@ interface Options {
   position: number;
   duration: number;
   playbackRate: number;
-  toggle: () => void;
+  resume: () => void;
+  pause: () => void;
   skip: (delta: number) => void;
   seek: (seconds: number) => void;
   stop: () => void;
+}
+
+interface Transport {
+  resume: () => void;
+  pause: () => void;
+  skip: (delta: number) => void;
+  seek: (seconds: number) => void;
+  stop: () => void;
+}
+
+/** The action table the platform is given.
+ *
+ *  Extracted and pure so the rule below can be tested: **no handler here may toggle.**
+ *  These actions are statements of intent from the OS, not button presses -- "pause" means
+ *  pause, and it is delivered in situations that have nothing to do with a user pressing
+ *  anything: an interruption ending, a Bluetooth device connecting, CarPlay attaching, the
+ *  app returning to the foreground with a restored audio session. A toggle wired here turns
+ *  a stray "pause" into playback starting on its own, which is precisely the bug this
+ *  shape prevents.
+ */
+export function mediaSessionHandlers(
+  transport: Transport,
+): [MediaSessionAction, MediaSessionActionHandler | null][] {
+  return [
+    ["play", () => transport.resume()],
+    ["pause", () => transport.pause()],
+    ["stop", () => transport.stop()],
+    ["seekbackward", (details) => transport.skip(-(details.seekOffset ?? SKIP_BACK_SECONDS))],
+    ["seekforward", (details) => transport.skip(details.seekOffset ?? SKIP_FORWARD_SECONDS)],
+    [
+      "seekto",
+      (details) => {
+        if (typeof details.seekTime === "number") transport.seek(details.seekTime);
+      },
+    ],
+    // Explicitly cleared. When these are set the platform shows track-skip buttons
+    // instead of the skip-back/skip-forward arcs, and for a podcast the arcs are what
+    // you actually reach for. Reaching the end of an episode still advances the queue.
+    ["previoustrack", null],
+    ["nexttrack", null],
+  ];
 }
 
 const SKIP_BACK_SECONDS = 10;
@@ -46,7 +88,8 @@ export function useMediaSession({
   position,
   duration,
   playbackRate,
-  toggle,
+  resume,
+  pause,
   skip,
   seek,
   stop,
@@ -72,21 +115,7 @@ export function useMediaSession({
   useEffect(() => {
     if (!session) return;
 
-    const handlers: [MediaSessionAction, MediaSessionActionHandler | null][] = [
-      ["play", () => toggle()],
-      ["pause", () => toggle()],
-      ["stop", () => stop()],
-      ["seekbackward", (details) => skip(-(details.seekOffset ?? SKIP_BACK_SECONDS))],
-      ["seekforward", (details) => skip(details.seekOffset ?? SKIP_FORWARD_SECONDS)],
-      ["seekto", (details) => {
-        if (typeof details.seekTime === "number") seek(details.seekTime);
-      }],
-      // Explicitly cleared. When these are set the platform shows track-skip buttons
-      // instead of the skip-back/skip-forward arcs, and for a podcast the arcs are what
-      // you actually reach for. Reaching the end of an episode still advances the queue.
-      ["previoustrack", null],
-      ["nexttrack", null],
-    ];
+    const handlers = mediaSessionHandlers({ resume, pause, skip, seek, stop });
 
     for (const [action, handler] of handlers) {
       try {
@@ -105,7 +134,7 @@ export function useMediaSession({
         }
       }
     };
-  }, [session, toggle, skip, seek, stop]);
+  }, [session, resume, pause, skip, seek, stop]);
 
   useEffect(() => {
     if (!session) return;

@@ -38,6 +38,9 @@ interface PlayerValue {
 
   play: (episode: Episode) => void;
   toggle: () => void;
+  /** Explicit transport, for callers where "the other one" is not what was asked for. */
+  resume: () => void;
+  pause: () => void;
   seek: (seconds: number) => void;
   skip: (delta: number) => void;
   setPlaybackRate: (rate: number) => void;
@@ -229,15 +232,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const play = useCallback((next: Episode) => cue(next, { autoplay: true }), [cue]);
 
-  const toggle = useCallback(() => {
+  /** Start playing. Idempotent -- already playing is not an error. */
+  const resume = useCallback(() => {
     const audio = audioRef.current;
     if (!audio || !episodeRef.current) return;
     if (audio.paused) {
       void audio.play().catch((cause) => setError(String(cause)));
-    } else {
-      audio.pause();
     }
   }, []);
+
+  /** Stop playing, without unloading the episode. Idempotent. */
+  const pause = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !episodeRef.current) return;
+    if (!audio.paused) audio.pause();
+  }, []);
+
+  /** For the app's own play/pause button, where one control means both. Deliberately not
+   *  what the OS media controls call -- see mediaSession.ts. */
+  const toggle = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !episodeRef.current) return;
+    if (audio.paused) resume();
+    else pause();
+  }, [resume, pause]);
 
   const seek = useCallback((seconds: number) => {
     const audio = audioRef.current;
@@ -501,7 +519,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     position,
     duration,
     playbackRate,
-    toggle,
+    resume,
+    pause,
     skip,
     seek,
     stop,
@@ -517,6 +536,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       expanded,
       play,
       toggle,
+      resume,
+      pause,
       seek,
       skip,
       setPlaybackRate,
@@ -529,7 +550,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }),
     [
       episode, playing, buffering, error, playbackRate, expanded,
-      play, toggle, seek, skip, setPlaybackRate, stop, setAdvanceHandler,
+      play, toggle, resume, pause, seek, skip, setPlaybackRate, stop, setAdvanceHandler,
       sleepMinutes, sleepAtEnd, setSleepTimer,
     ],
   );
