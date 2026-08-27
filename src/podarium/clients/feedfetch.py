@@ -257,23 +257,42 @@ async def fetch_feed(
     if last_modified:
         headers["If-Modified-Since"] = last_modified
 
-    # Retried once on a broken body, because the alternative is a two-hour wait: a single
-    # failure doubles this feed's backoff, and the show page carries a red "last refresh
-    # failed" banner until the next success. The request is a GET, so repeating it is free
+    # Retried once on a broken body, because the alternative is a wait measured in hours
+    # for a fault measured in milliseconds. The request is a GET, so repeating it is free
     # of consequences.
+    #
+    # The retry is deliberately not identical. A gzip stream that fails to decompress can
+    # mean a corrupted *compressed object cached at the CDN edge*, and asking the same way
+    # a second later reaches the same cache and fails the same way -- which is what a retry
+    # that changes nothing buys you. So a decoding failure specifically is retried asking
+    # for the feed uncompressed: different representation, different cache entry, and no
+    # decompressor in the path at all. It costs bandwidth (5 MB rather than 700 KB for the
+    # feed this was written for) on an attempt that only happens after a failure.
+    last_error: Exception | None = None
+
     for attempt in range(2):
+        attempt_headers = dict(headers)
+        if attempt == 1 and isinstance(last_error, httpx.DecodingError):
+            attempt_headers["Accept-Encoding"] = "identity"
+
         try:
             return await _fetch_once(
                 feed_url,
-                headers=headers,
+                headers=attempt_headers,
                 user_agent=user_agent,
                 etag=etag,
                 last_modified=last_modified,
             )
         except TRUNCATION_ERRORS as exc:
+            last_error = exc
             if attempt == 1:
                 raise
-            log.info("refetching %s after a broken response: %s", feed_url, exc)
+            log.info(
+                "refetching %s%s after a broken response: %s",
+                feed_url,
+                " uncompressed" if isinstance(exc, httpx.DecodingError) else "",
+                exc,
+            )
             await asyncio.sleep(RETRY_PAUSE_SECONDS)
 
     raise AssertionError("unreachable")  # pragma: no cover
@@ -303,6 +322,19 @@ async def _fetch_once(
                     if len(body) > MAX_FEED_BYTES:
                         raise ValueError(
                             f"feed exceeds {MAX_FEED_BYTES // (1024 * 1024)} MB; refusing to parse it"
+                        )
+
+                # On a compressed response a short read fails in the decompressor, loudly.
+                # On an uncompressed one nothing checks, and a truncated document parses
+                # into a feed that is merely missing its oldest episodes -- which would be
+                # accepted in silence. Content-Length describes the encoded body, so this
+                # is only meaningful when there is no encoding applied.
+                if not response.headers.get("content-encoding"):
+                    declared = response.headers.get("content-length")
+                    if declared and declared.isdigit() and len(body) != int(declared):
+                        raise httpx.RemoteProtocolError(
+                            f"truncated feed: got {len(body)} bytes, Content-Length was {declared}",
+                            request=response.request,
                         )
 
     if response.status_code == httpx.codes.NOT_MODIFIED:

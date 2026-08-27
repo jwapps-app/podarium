@@ -42,6 +42,64 @@ async def test_a_broken_body_is_refetched_once(monkeypatch):
 
 
 @respx.mock
+async def test_a_decoding_failure_is_retried_uncompressed(monkeypatch):
+    """A gzip stream that will not decompress can be a corrupted compressed object cached
+    at the CDN edge. Asking the same way again reaches the same cache and fails the same
+    way, so the retry asks for a different representation with no decompressor in it."""
+    monkeypatch.setattr("podarium.clients.feedfetch.RETRY_PAUSE_SECONDS", 0)
+    seen: list[str | None] = []
+
+    def respond(request):
+        seen.append(request.headers.get("accept-encoding"))
+        if len(seen) == 1:
+            raise httpx.DecodingError("invalid distance code", request=request)
+        return httpx.Response(200, text=FEED_XML)
+
+    respx.get(URL).mock(side_effect=respond)
+
+    result = await fetch_feed(URL, user_agent="test")
+
+    assert result.parsed is not None
+    assert seen[0] != "identity", "the first attempt should accept compression normally"
+    assert seen[1] == "identity", "the retry should ask for the uncompressed feed"
+
+
+@respx.mock
+async def test_other_broken_bodies_retry_the_same_way(monkeypatch):
+    """Only a decoding failure implicates the compressed representation. A dropped
+    connection says nothing about it, so that retry is left alone."""
+    monkeypatch.setattr("podarium.clients.feedfetch.RETRY_PAUSE_SECONDS", 0)
+    seen: list[str | None] = []
+
+    def respond(request):
+        seen.append(request.headers.get("accept-encoding"))
+        if len(seen) == 1:
+            raise httpx.ReadError("connection dropped")
+        return httpx.Response(200, text=FEED_XML)
+
+    respx.get(URL).mock(side_effect=respond)
+
+    await fetch_feed(URL, user_agent="test")
+
+    assert seen[1] != "identity"
+
+
+@respx.mock
+async def test_a_short_uncompressed_body_is_caught(monkeypatch):
+    """Without a decompressor nothing else notices a truncated document -- it would parse
+    into a feed quietly missing its oldest episodes."""
+    monkeypatch.setattr("podarium.clients.feedfetch.RETRY_PAUSE_SECONDS", 0)
+    respx.get(URL).mock(
+        return_value=httpx.Response(
+            200, content=b"<rss><channel><title>cut off", headers={"content-length": "99999"}
+        )
+    )
+
+    with pytest.raises(httpx.RemoteProtocolError, match="truncated feed"):
+        await fetch_feed(URL, user_agent="test")
+
+
+@respx.mock
 async def test_it_gives_up_after_one_retry(monkeypatch):
     """Two failures in a row is not a blip, and the exponential backoff should take over
     rather than this loop retrying forever."""
