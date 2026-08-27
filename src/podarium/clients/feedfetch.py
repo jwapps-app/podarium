@@ -6,7 +6,9 @@ discovery only (spec 7).
 
 from __future__ import annotations
 
+import asyncio
 import calendar
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -15,6 +17,8 @@ import feedparser
 import httpx
 
 from podarium.clients.http import build_client
+
+log = logging.getLogger("podarium")
 
 
 @dataclass(slots=True)
@@ -223,6 +227,21 @@ async def resolve_feed_url(url: str, *, user_agent: str) -> str | None:
 # The most feed XML one fetch may hold in memory. Publisher-controlled input.
 MAX_FEED_BYTES = 30 * 1024 * 1024
 
+# Failures that mean "the answer arrived broken", as distinct from "the host is unwell".
+#
+# A truncated gzip body surfaces as DecodingError -- zlib gets a stream that starts clean
+# and ends early ("invalid distance code"). Megaphone does this to the Rogan feed
+# occasionally: 20 consecutive fetches succeeded while reproducing it, so it is a CDN
+# hiccup on a 5 MB document, not a property of the feed.
+#
+# Timeouts and connection errors are deliberately not in here. Those say the host is slow
+# or down, and the right answer is the exponential backoff that already exists -- retrying
+# immediately would just double the time a sick host costs every refresh pass.
+TRUNCATION_ERRORS = (httpx.DecodingError, httpx.RemoteProtocolError, httpx.ReadError)
+
+# One retry, after long enough for a blip to pass and not so long that a refresh stalls.
+RETRY_PAUSE_SECONDS = 1.0
+
 
 async def fetch_feed(
     feed_url: str,
@@ -238,6 +257,38 @@ async def fetch_feed(
     if last_modified:
         headers["If-Modified-Since"] = last_modified
 
+    # Retried once on a broken body, because the alternative is a two-hour wait: a single
+    # failure doubles this feed's backoff, and the show page carries a red "last refresh
+    # failed" banner until the next success. The request is a GET, so repeating it is free
+    # of consequences.
+    for attempt in range(2):
+        try:
+            return await _fetch_once(
+                feed_url,
+                headers=headers,
+                user_agent=user_agent,
+                etag=etag,
+                last_modified=last_modified,
+            )
+        except TRUNCATION_ERRORS as exc:
+            if attempt == 1:
+                raise
+            log.info("refetching %s after a broken response: %s", feed_url, exc)
+            await asyncio.sleep(RETRY_PAUSE_SECONDS)
+
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+async def _fetch_once(
+    feed_url: str,
+    *,
+    headers: dict[str, str],
+    user_agent: str,
+    etag: str | None,
+    last_modified: str | None,
+) -> FetchResult:
+    """One attempt. The stored validators are passed through because a 304 reports them
+    back unchanged -- the server sends no body and no headers to re-derive them from."""
     async with build_client(user_agent) as client:
         async with client.stream("GET", feed_url, headers=headers) as response:
             if response.status_code != httpx.codes.NOT_MODIFIED:
