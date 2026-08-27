@@ -178,7 +178,7 @@ export function SearchPage() {
                       ) : null}
                     </div>
                     {result.description ? (
-                      <p style={{ margin: "6px 0 0", color: "var(--text-muted)", fontSize: 13.5 }}>
+                      <p className="search-result-description">
                         {toPlainText(result.description, 220)}
                       </p>
                     ) : null}

@@ -82,6 +82,31 @@ button {
   cursor: pointer;
 }
 
+/* Publisher text is arbitrary, and some of it is a 137-character run with no spaces --
+   a show that writes "interviews.www.youtube.com/@Xwww.patreon.com/X..." as one token is
+   real, and it is in this library. Without this the token paints straight out of its box,
+   drags the document wider than the viewport, and the whole page slides left and right on
+   a phone; pinch-to-zoom appears to fix it because that resets the visual viewport.
+
+   `anywhere` rather than `break-word` because only `anywhere` also shrinks the element's
+   min-content width, which is what stops a long token forcing a flex or grid parent wide
+   in the first place. */
+:is(.episode-notes, .episode-title, .np-title, .preview-description, .preview-episode-title,
+    .feed-description, .panel-hint, .field-hint, .episode-meta, .search-result-description) {
+  overflow-wrap: anywhere;
+}
+
+/* A backstop, not the fix -- the wrapping above is. Publisher content is arbitrary and
+   this app renders a lot of it, so one unanticipated token should degrade to a clipped
+   pixel rather than to a page that slides sideways.
+
+   `clip` rather than `hidden`: hidden makes the element a scroll container, which silently
+   breaks `position: sticky` inside it. Wide content that genuinely needs to scroll gets its
+   own overflow container instead of relying on the page. */
+html, body {
+  overflow-x: clip;
+}
+
 input, select, textarea {
   font: inherit;
   color: var(--text);
@@ -1237,6 +1262,12 @@ button.player-title:hover { color: var(--accent); }
 .np-chapter-time { flex: none; font-size: 12px; color: var(--text-faint); padding-top: 1px; }
 .np-chapter.on .np-chapter-time { color: var(--accent); }
 .np-chapter-title { min-width: 0; }
+
+.search-result-description {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 13.5px;
+}
 
 /* Library search. Full width because a query is the whole point of the row it sits in. */
 .search-row { margin-bottom: 14px; }
