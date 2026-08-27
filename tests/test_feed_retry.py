@@ -87,3 +87,35 @@ async def test_a_good_response_is_fetched_once(monkeypatch):
     await fetch_feed(URL, user_agent="test")
 
     assert route.call_count == 1
+
+
+class TestBackoffShape:
+    """How long a failing feed waits before it is tried again.
+
+    Backoff protects a host that is down. A single blip is not that, and treating it as
+    such leaves a "last refresh failed" banner standing for hours over a fault that lasted
+    milliseconds.
+    """
+
+    @staticmethod
+    def _due_after(error_count: int, interval_seconds: int = 3600) -> int:
+        from podarium.jobs.refresh import MAX_BACKOFF_DOUBLINGS
+
+        return interval_seconds * 2 ** min(max(0, error_count - 1), MAX_BACKOFF_DOUBLINGS)
+
+    def test_a_healthy_feed_refreshes_on_the_normal_interval(self):
+        assert self._due_after(0) == 3600
+
+    def test_one_failure_does_not_delay_the_next_attempt(self):
+        assert self._due_after(1) == 3600
+
+    def test_backoff_starts_at_the_second_consecutive_failure(self):
+        assert self._due_after(2) == 7200
+        assert self._due_after(3) == 14400
+
+    def test_it_is_capped_so_a_dead_feed_is_still_checked_eventually(self):
+        from podarium.jobs.refresh import MAX_BACKOFF_DOUBLINGS
+
+        capped = self._due_after(50)
+        assert capped == 3600 * 2**MAX_BACKOFF_DOUBLINGS
+        assert capped == self._due_after(MAX_BACKOFF_DOUBLINGS + 1)

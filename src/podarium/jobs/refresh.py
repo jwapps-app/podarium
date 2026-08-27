@@ -328,7 +328,13 @@ def _is_due(feed: Feed, interval_seconds: int, now: datetime) -> bool:
         return True
     # last_fetched_at records the last *attempt*; a failing feed backs off exponentially
     # rather than hammering a host that is down.
-    backoff = 2 ** min(feed.fetch_error_count, MAX_BACKOFF_DOUBLINGS)
+    #
+    # The first failure does not back off at all. Backoff exists for a host that is
+    # genuinely unwell, and one failure is not evidence of that -- publishers serve the odd
+    # truncated body, and doubling the interval for it means the show page carries a red
+    # "last refresh failed" banner for two hours over a fault that lasted milliseconds.
+    # Two consecutive failures is a pattern, and that is where the doubling starts.
+    backoff = 2 ** min(max(0, feed.fetch_error_count - 1), MAX_BACKOFF_DOUBLINGS)
     due_after = interval_seconds * backoff + _feed_jitter_seconds(feed.id, interval_seconds)
     last = feed.last_fetched_at
     if last.tzinfo is None:
