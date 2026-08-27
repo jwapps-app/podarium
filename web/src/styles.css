@@ -1168,3 +1168,64 @@ button.player-title:hover { color: var(--accent); }
 
 /* A wrapped "743 MB" reads as two numbers. */
 .storage-num { text-align: right; white-space: nowrap; }
+
+/* Sleep timer popover. Anchored to its button rather than centred on the page: it is a
+   choice about the thing you just pressed, not a dialogue about the app. */
+.sleep-wrap { position: relative; display: inline-flex; }
+
+.sleep-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 170px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.sleep-menu button {
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.sleep-menu button:hover { background: var(--bg-hover); }
+.sleep-menu .sleep-cancel { color: var(--danger); border-top: 1px solid var(--border); margin-top: 4px; }
+
+/* Chapters. A monospaced timestamp column so the titles line up rather than ragging
+   against timecodes of different widths. */
+.np-chapter {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 7px 8px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.np-chapter:hover { background: var(--bg-hover); color: var(--text); }
+.np-chapter.on { background: var(--accent-soft); color: var(--text); }
+.np-chapter-time { flex: none; font-size: 12px; color: var(--text-faint); padding-top: 1px; }
+.np-chapter.on .np-chapter-time { color: var(--accent); }
+.np-chapter-title { min-width: 0; }
+
+/* Library search. Full width because a query is the whole point of the row it sits in. */
+.search-row { margin-bottom: 14px; }
+.search-row input { width: 100%; }

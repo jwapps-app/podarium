@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 
+import { api } from "../lib/api";
 import { formatClock, formatDate, formatDuration } from "../lib/format";
 import { PLAYBACK_RATES, usePlayer } from "../lib/player";
 import { useEpisodeActions, useFeeds, useQueue } from "../lib/queries";
@@ -166,6 +168,7 @@ export function NowPlaying() {
             <button className="btn btn-sm rate-btn" onClick={cycleRate} title="Playback speed">
               {player.playbackRate}&times;
             </button>
+            <SleepTimerButton />
             <button
               className={`btn-icon${queued ? " on" : ""}`}
               onClick={() =>
@@ -239,6 +242,8 @@ export function NowPlaying() {
             </section>
           ) : null}
 
+          <ChapterList episodeId={episode.id} />
+
           {episode.description_html ? (
             <section className="np-section">
               <h2 className="np-section-title">Show notes</h2>
@@ -252,5 +257,92 @@ export function NowPlaying() {
         </aside>
       </div>
     </div>
+  );
+}
+
+const SLEEP_CHOICES = [5, 15, 30, 45, 60] as const;
+
+/** Sleep timer. Its own popover, because five options do not belong in the transport row. */
+function SleepTimerButton() {
+  const player = usePlayer();
+  const [open, setOpen] = useState(false);
+
+  const active = player.sleepMinutes !== null || player.sleepAtEnd;
+  const label = player.sleepAtEnd ? "End" : player.sleepMinutes !== null ? `${player.sleepMinutes}m` : null;
+
+  const choose = (value: number | "episode" | null) => {
+    player.setSleepTimer(value);
+    setOpen(false);
+  };
+
+  return (
+    <div className="sleep-wrap">
+      <button
+        className={`btn btn-sm${active ? " on" : ""}`}
+        onClick={() => setOpen((value) => !value)}
+        title="Sleep timer"
+        aria-expanded={open}
+      >
+        {active ? `Sleep ${label}` : "Sleep"}
+      </button>
+
+      {open ? (
+        <div className="sleep-menu" role="menu">
+          {SLEEP_CHOICES.map((minutes) => (
+            <button key={minutes} role="menuitem" onClick={() => choose(minutes)}>
+              {minutes} minutes
+            </button>
+          ))}
+          <button role="menuitem" onClick={() => choose("episode")}>
+            End of episode
+          </button>
+          {active ? (
+            <button role="menuitem" className="sleep-cancel" onClick={() => choose(null)}>
+              Cancel timer
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Chapters, when the show publishes them.
+ *
+ *  Renders nothing at all when it has none, which is most shows -- an empty "Chapters"
+ *  heading on every episode would be worse than no feature.
+ */
+function ChapterList({ episodeId }: { episodeId: number }) {
+  const player = usePlayer();
+  const { data } = useQuery({
+    queryKey: ["chapters", episodeId],
+    queryFn: () => api.chapters(episodeId),
+    // The server caches the fetch; there is no reason to ask twice in a session.
+    staleTime: Infinity,
+  });
+
+  const chapters = data?.chapters ?? [];
+  if (chapters.length === 0) return null;
+
+  // The chapter containing the playhead, i.e. the last one that has started.
+  let currentIndex = -1;
+  chapters.forEach((chapter, index) => {
+    if (player.position >= chapter.start_seconds) currentIndex = index;
+  });
+
+  return (
+    <section className="np-section">
+      <h2 className="np-section-title">Chapters</h2>
+      {chapters.map((chapter, index) => (
+        <button
+          key={`${chapter.start_seconds}-${index}`}
+          className={`np-chapter${index === currentIndex ? " on" : ""}`}
+          onClick={() => player.seek(chapter.start_seconds)}
+        >
+          <span className="np-chapter-time mono">{formatClock(chapter.start_seconds)}</span>
+          <span className="np-chapter-title">{chapter.title ?? `Chapter ${index + 1}`}</span>
+        </button>
+      ))}
+    </section>
   );
 }

@@ -28,6 +28,18 @@ class Settings(BaseSettings):
     podcastindex_key: str | None = None
     podcastindex_secret: str | None = None
 
+    # Web Push. Both halves of one keypair; generate with `python -m podarium.vapid`.
+    #
+    # The public key is handed to the browser at subscribe time and pinned to the
+    # subscription it creates, so rotating the private key silently breaks every existing
+    # subscription -- the push service will reject a claim signed by a key that does not
+    # match. Absent, push is simply off.
+    vapid_public_key: str | None = None
+    vapid_private_key: str | None = None
+    # Required by the spec so a push service has someone to contact about a misbehaving
+    # sender. mailto: or https:.
+    vapid_contact: str = "mailto:admin@localhost"
+
     # First-boot bootstrap. Applied only when the users table is empty.
     podarium_username: str | None = None
     podarium_password: str | None = None

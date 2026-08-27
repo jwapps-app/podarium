@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ErrorNotice, Loading } from "../components/Loading";
 import { TrashIcon } from "../components/Icons";
 import { api } from "../lib/api";
+import { describeSubscription, urlBase64ToUint8Array } from "../lib/offline";
+import { useOffline } from "../lib/offlineStore";
 import { formatBytes, formatRelativeExact } from "../lib/format";
 import { PLAYBACK_RATES } from "../lib/player";
 import { useAuth } from "../lib/auth";
@@ -39,6 +41,8 @@ export function SettingsPage() {
           global_auto_download_count: settings.global_auto_download_count,
         }}
       />
+      <NotificationsPanel />
+      <OfflinePanel />
       <OpmlPanel />
       <TokensPanel />
       <AccountPanel />
@@ -550,6 +554,153 @@ function TokensPanel() {
             ))}
           </tbody>
         </table>
+      ) : null}
+    </div>
+  );
+}
+
+/** New-episode notifications.
+ *
+ *  Every failure mode here is silent and remote -- permission granted to a different
+ *  origin, a key that does not match the subscription, an endpoint the push service has
+ *  quietly retired -- so the panel leans on one test button that either buzzes the device
+ *  or does not.
+ */
+function NotificationsPanel() {
+  const queryClient = useQueryClient();
+  const { data: config } = useQuery({ queryKey: ["push-config"], queryFn: api.pushConfig });
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const supported =
+    typeof window !== "undefined" &&
+    "Notification" in window &&
+    "serviceWorker" in navigator &&
+    "PushManager" in window &&
+    window.isSecureContext;
+
+  const enable = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setError("Notifications were not allowed. Your browser will not ask again until you change it in site settings.");
+        return;
+      }
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.subscribe({
+        // Required to be true by every browser: a push that shows nothing is not allowed.
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(config!.public_key!),
+      });
+      await api.pushSubscribe({ ...describeSubscription(subscription), label: navigator.userAgent.slice(0, 80) });
+      await queryClient.invalidateQueries({ queryKey: ["push-config"] });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const registration = await navigator.serviceWorker.ready;
+      const subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        await subscription.unsubscribe();
+        await api.pushUnsubscribe(subscription.endpoint);
+      } else {
+        // No local subscription to name, so clear every device rather than leave rows
+        // behind that nothing can reach.
+        await api.pushUnsubscribe();
+      }
+      await queryClient.invalidateQueries({ queryKey: ["push-config"] });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="panel">
+      <div className="panel-title">Notifications</div>
+      <p className="panel-hint">
+        A single notification per refresh when new episodes arrive — not one per show.
+      </p>
+
+      {!supported ? (
+        <div className="field-hint">
+          This browser cannot receive push notifications. On iOS they only work once
+          Podarium has been added to the Home Screen, and only over HTTPS.
+        </div>
+      ) : !config ? null : !config.public_key ? (
+        <div className="field-hint">
+          The server has no VAPID keys, so push is switched off. Generate a pair with{" "}
+          <code className="mono">python -m podarium.vapid</code> and set{" "}
+          <code className="mono">VAPID_PUBLIC_KEY</code> and{" "}
+          <code className="mono">VAPID_PRIVATE_KEY</code>.
+        </div>
+      ) : config.subscribed ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn" disabled={busy} onClick={() => void api.pushTest()}>
+            Send a test
+          </button>
+          <button className="btn btn-danger" disabled={busy} onClick={() => void disable()}>
+            Turn off
+          </button>
+        </div>
+      ) : (
+        <button className="btn" disabled={busy} onClick={() => void enable()}>
+          {busy ? "Enabling…" : "Turn on"}
+        </button>
+      )}
+
+      {error ? (
+        <div className="notice notice-error" style={{ marginTop: 12 }}>{error}</div>
+      ) : null}
+    </div>
+  );
+}
+
+/** What is on this device, and the honest limits of it. */
+function OfflinePanel() {
+  const offline = useOffline();
+
+  return (
+    <div className="panel">
+      <div className="panel-title">Offline</div>
+      <p className="panel-hint">
+        Podarium streams from your server, so without a network there is nothing to play.
+        Episodes kept on this device are the exception — they are stored in the browser and
+        play with no connection at all.
+      </p>
+
+      {!offline.supported ? (
+        <div className="field-hint">
+          This browser cannot store episodes. It needs a service worker, which means HTTPS —
+          over plain HTTP on the LAN, only streaming works.
+        </div>
+      ) : (
+        <>
+          <div className="field-hint">
+            {offline.saved.size === 0
+              ? "Nothing kept on this device yet. Use the phone button on any downloaded episode."
+              : `${offline.saved.size} episode${offline.saved.size === 1 ? "" : "s"} kept on this device.`}
+          </div>
+          <div className="field-hint" style={{ marginTop: 8 }}>
+            Storage here is granted by the browser and it can be reclaimed without warning —
+            iOS in particular is aggressive about it. Treat it as a convenience for a
+            journey, not as a copy you can rely on.
+          </div>
+        </>
+      )}
+
+      {offline.error ? (
+        <div className="notice notice-error" style={{ marginTop: 12 }}>{offline.error}</div>
       ) : null}
     </div>
   );

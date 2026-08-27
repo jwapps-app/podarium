@@ -73,6 +73,54 @@ from PinePods.
 The image builds the web UI in its own stage and serves it from `/app/web`, so there is
 one container and one port for both the API and the UI.
 
+## Notifications
+
+Off unless the server has a VAPID keypair. Generate one, put both halves in the environment,
+and restart:
+
+```bash
+python -m podarium.vapid
+```
+
+Browsers pin the public key at subscribe time, so rotating the private key silently breaks
+every subscription already issued — every device then has to enable notifications again.
+Generate a separate pair for local development rather than reusing the server's.
+
+On iOS, web push only works once Podarium has been added to the Home Screen, and only over
+HTTPS. On the LAN over plain HTTP it will not be offered at all.
+
+## Offline
+
+Podarium streams from the server by design, so with no network there is nothing to play.
+Episodes explicitly kept on a device are the exception: the service worker stores them whole
+and serves byte ranges out of that copy, so they play with the server unreachable.
+
+This needs a secure context, which means the HTTPS hostname rather than the LAN address.
+Browser storage is also granted rather than guaranteed — iOS in particular reclaims it
+without warning — so it is a convenience for a journey, not a copy to rely on. Downloading
+to the device properly is what the native client is for.
+
+## Backups
+
+`vzdump` already sweeps `pgdata`, but a filesystem snapshot of a running Postgres is
+crash-consistent rather than consistent: what you would have if the power went out mid-write.
+Postgres normally replays its WAL and comes up clean from that, and "normally" is doing real
+work in that sentence.
+
+The stack therefore runs a nightly `pg_dump` into `/home/jworthington/docker/podarium/backups`,
+inside the tree vzdump already picks up, so the backup holds both the raw directory and a
+logically consistent dump. `scripts/pg-backup.sh` has to be on the host before the stack
+comes up — see the BACKUPS section at the bottom of the stack file.
+
+Restoring one:
+
+```bash
+gunzip -c podarium-YYYYMMDD-HHMMSS.sql.gz | docker exec -i podarium-db psql -U podarium -d podarium
+```
+
+What is in that database: subscriptions, every playback position, stars, the queue, and API
+tokens. The audio can be downloaded again; none of that can.
+
 ## Locked out
 
 Two-factor codes are checked against a secret stored encrypted with a key derived from

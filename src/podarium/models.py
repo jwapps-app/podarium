@@ -134,6 +134,10 @@ class Feed(Base):
     retention_mode: Mapped[RetentionMode | None] = mapped_column(_enum(RetentionMode, "retention_mode"))
     retention_days: Mapped[int | None] = mapped_column(Integer)
 
+    # Same inherit-or-override shape again. Speed is the setting that varies most by show:
+    # a dense interview holds up at 1.5x where a scripted narrative does not.
+    playback_rate: Mapped[float | None] = mapped_column(Float)
+
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = _now_col(nullable=False)
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
@@ -169,6 +173,13 @@ class Episode(Base):
     enclosure_url: Mapped[str | None] = mapped_column(Text)
     enclosure_type: Mapped[str | None] = mapped_column(String(128))
     enclosure_bytes: Mapped[int | None] = mapped_column(BigInteger)
+
+    # podcast:chapters, as published. The publisher's URL, never handed to a client -- the
+    # server fetches it and serves the result from /api/episodes/{id}/chapters, the same way
+    # audio and artwork are mediated.
+    chapters_url: Mapped[str | None] = mapped_column(Text)
+    chapters_json: Mapped[str | None] = mapped_column(Text)
+    chapters_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # NULL means not on disk. Retention nulls this; it never deletes the row.
     local_path: Mapped[str | None] = mapped_column(Text)
@@ -286,6 +297,32 @@ class LoginAttempt(Base):
     username: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
     attempted_at: Mapped[datetime] = _now_col(nullable=False, index=True)
+
+
+class PushSubscription(Base):
+    """A browser's Web Push endpoint, so new episodes can reach a closed app.
+
+    The endpoint URL is issued by the browser vendor's push service and is the address the
+    server posts to; the two keys are the client's half of the encryption, without which a
+    push cannot be constructed. All three are opaque to us.
+
+    Keyed by endpoint rather than by device, because that is the only identifier the
+    browser gives us and it is regenerated whenever a subscription is replaced. A stale one
+    is not an error to chase: the push service answers 404 or 410 for an endpoint that has
+    been revoked, and the row is dropped when it does.
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    endpoint: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    # What the user calls the device, for the settings list.
+    label: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now_col(nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DeletedFeed(Base):

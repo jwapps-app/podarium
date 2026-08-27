@@ -22,6 +22,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from podarium import push
 from podarium.clients.feedfetch import ParsedEpisode, fetch_feed
 from podarium.db import get_sessionmaker
 from podarium.jobs.artwork import ensure_feed_artwork
@@ -35,6 +36,7 @@ from podarium.models import (
     JobSource,
     QueueItem,
     RetentionMode,
+    User,
 )
 from podarium.services import (
     effective_auto_download_count,
@@ -78,6 +80,7 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
         ("enclosure_url", parsed.enclosure_url),
         ("enclosure_type", parsed.enclosure_type),
         ("enclosure_bytes", parsed.enclosure_bytes),
+        ("chapters_url", parsed.chapters_url),
     ):
         if value is None:
             # A field missing from this render of the feed is not an instruction to erase
@@ -347,14 +350,55 @@ async def refresh_due_feeds() -> int:
         due = [feed for feed in feeds if _is_due(feed, interval_seconds, now)]
 
     refreshed = 0
+    arrivals: list[tuple[str, int]] = []
     for feed in due:
         async with sessionmaker() as session:
             fresh = await session.get(Feed, feed.id)
             if fresh is None:
                 continue
-            await refresh_feed(session, fresh, user_agent=user_agent)
+            outcome = await refresh_feed(session, fresh, user_agent=user_agent)
             refreshed += 1
+            if outcome.new_episodes:
+                arrivals.append((fresh.title or fresh.feed_url, outcome.new_episodes))
+
+    if arrivals:
+        async with sessionmaker() as session:
+            await _notify_new_episodes(session, arrivals, user_agent=user_agent)
     return refreshed
+
+
+async def _notify_new_episodes(
+    session: AsyncSession, arrivals: list[tuple[str, int]], *, user_agent: str
+) -> None:
+    """One notification for the whole pass, not one per show.
+
+    A pass that refreshes twelve feeds at the top of the hour would otherwise fire twelve
+    notifications at once, which is how a useful signal becomes something you turn off.
+
+    Failures here are swallowed deliberately: a push service being unreachable is not a
+    reason for a refresh to be recorded as failed, and the episodes are already saved.
+    """
+    total = sum(count for _, count in arrivals)
+    shows = [title for title, _ in arrivals]
+    if len(shows) == 1:
+        body = shows[0]
+    elif len(shows) <= 3:
+        body = ", ".join(shows)
+    else:
+        body = f"{', '.join(shows[:3])} and {len(shows) - 3} more"
+
+    payload = {
+        "title": f"{total} new episode{'' if total == 1 else 's'}",
+        "body": body,
+        "url": "/inbox",
+    }
+
+    try:
+        users = (await session.execute(select(User))).scalars().all()
+        for user in users:
+            await push.send_to_all(session, user.id, payload, user_agent=user_agent)
+    except Exception:  # noqa: BLE001 - notification is not worth failing a refresh over
+        log.exception("could not send new-episode notifications")
 
 
 async def refresh_loop(stop: asyncio.Event, tick_seconds: int = 60) -> None:

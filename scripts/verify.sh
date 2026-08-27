@@ -306,6 +306,66 @@ RESUME_CHECK
     -d '{"played": true, "position_seconds": 0}' -o /dev/null
 fi
 
+step "library search"
+# Asserted against the run's own feed rather than a fixed word: whatever this server is
+# subscribed to, searching its title must return its episodes and nothing else's.
+FEED_TITLE="$(api "$BASE/api/feeds/$FEED_ID" | json 'd["title"] or ""')"
+api --get --data-urlencode "q=$FEED_TITLE" --data-urlencode "limit=20" "$BASE/api/episodes" \
+  > "$TMP/search.json"
+python3 - "$TMP/search.json" "$FEED_ID" <<'SEARCH' || fail "library search is wrong"
+import json, sys
+
+body = json.load(open(sys.argv[1]))
+items = body["items"]
+assert items, "searching a subscribed show's own title returned nothing"
+assert all(e["feed_id"] == int(sys.argv[2]) for e in items), "search crossed into other shows"
+SEARCH
+pass "searching a show's title returns its episodes"
+
+# A wildcard character must be matched literally, not expanded.
+api --get --data-urlencode "q=%" "$BASE/api/episodes" > "$TMP/wild.json"
+LITERAL="$(json 'len(d["items"])' < "$TMP/wild.json")"
+api "$BASE/api/episodes?limit=200" > "$TMP/all.json"
+TOTAL="$(json 'len(d["items"])' < "$TMP/all.json")"
+[ "$LITERAL" -lt "$TOTAL" ] || fail "a literal % behaved as a LIKE wildcard"
+pass "a % in the query is matched literally"
+
+step "chapters"
+# Every episode answers, with an empty list where a show publishes none -- "no chapters" is
+# the ordinary case and must not be an error the client has to handle.
+[ "$(code "$BASE/api/episodes/$EP_ID/chapters")" = 200 ] || fail "chapters endpoint failed"
+api "$BASE/api/episodes/$EP_ID/chapters" | json 'isinstance(d["chapters"], list)' | grep -q True \
+  || fail "chapters did not return a list"
+pass "chapters endpoint answers for an episode with none"
+
+step "bulk mark played"
+api -X POST "$BASE/api/feeds/$FEED_ID/played" > "$TMP/played.json"
+UNPLAYED="$(api "$BASE/api/episodes?feed_id=$FEED_ID&unplayed=true&limit=200" | json 'len(d["items"])')"
+[ "$UNPLAYED" = 0 ] || fail "episodes remained unplayed after marking the show played"
+pass "marking a show played clears its whole backlog"
+
+# Reversible, and put back so the rest of the run sees the library it expected.
+api -X POST "$BASE/api/feeds/$FEED_ID/played?played=false" > /dev/null
+STILL_PLAYED="$(api "$BASE/api/episodes?feed_id=$FEED_ID&unplayed=false&limit=200" | json 'len(d["items"])')"
+[ "$STILL_PLAYED" = 0 ] || fail "marking unplayed did not reverse"
+pass "and reverses cleanly"
+
+step "push"
+# Without VAPID keys this reports push as unavailable rather than failing; with them it
+# reports a key. Both are correct, so the assertion is that it answers coherently.
+api "$BASE/api/push/config" > "$TMP/push.json"
+python3 - "$TMP/push.json" <<'PUSH' || fail "push config is incoherent"
+import json, sys
+
+body = json.load(open(sys.argv[1]))
+assert set(body) == {"public_key", "subscribed"}, body
+if body["public_key"] is None:
+    assert body["subscribed"] is False, "subscribed devices but no key to sign for them"
+else:
+    assert len(body["public_key"]) > 80, "VAPID public key looks too short to be a P-256 point"
+PUSH
+pass "push config is coherent with the server's key state"
+
 step "storage report"
 # Asserted as identities, not amounts: this run's own downloads and whatever else is on
 # this disk both move the totals, but the parts must always add up to the whole.

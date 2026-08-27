@@ -92,12 +92,14 @@ class FeedUpdateRequest(BaseModel):
     auto_download_count: int | None = Field(default=None, ge=0)
     retention_mode: RetentionMode | None = None
     retention_days: int | None = Field(default=None, ge=0)
+    playback_rate: float | None = Field(default=None, gt=0, le=5)
     active: bool | None = None
     # NULL is meaningful on these columns (it means "inherit the global"), so an explicit
     # clear needs its own flag rather than being confused with "field omitted".
     clear_retention_mode: bool = False
     clear_retention_days: bool = False
     clear_auto_download_count: bool = False
+    clear_playback_rate: bool = False
 
 
 class FeedOut(BaseModel):
@@ -117,6 +119,9 @@ class FeedOut(BaseModel):
     effective_auto_download_count: int
     retention_mode: RetentionMode | None
     retention_days: int | None
+    # As above: None inherits the global default, effective_playback_rate is what plays.
+    playback_rate: float | None
+    effective_playback_rate: float
     active: bool
     last_fetched_at: datetime | None
     fetch_error: str | None
@@ -157,6 +162,15 @@ class EpisodeOut(BaseModel):
     last_played_at: datetime | None = None
     starred: bool = False
     updated_at: datetime
+
+
+class ChapterOut(BaseModel):
+    start_seconds: float
+    title: str | None
+
+
+class ChaptersOut(BaseModel):
+    chapters: list[ChapterOut]
 
 
 class EpisodeListOut(BaseModel):
@@ -254,6 +268,7 @@ def feed_out(
     unplayed_count: int | None = None,
     new_episode_count: int | None = None,
     global_auto_download_count: int = 0,
+    global_playback_rate: float = 1.0,
 ) -> FeedOut:
     return FeedOut(
         id=feed.id,
@@ -274,6 +289,10 @@ def feed_out(
         ),
         retention_mode=feed.retention_mode,
         retention_days=feed.retention_days,
+        playback_rate=feed.playback_rate,
+        effective_playback_rate=(
+            feed.playback_rate if feed.playback_rate is not None else global_playback_rate
+        ),
         active=feed.active,
         last_fetched_at=feed.last_fetched_at,
         fetch_error=feed.fetch_error,

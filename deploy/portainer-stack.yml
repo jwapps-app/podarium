@@ -75,6 +75,31 @@ services:
       timeout: 5s
       retries: 10
 
+  # Nightly logical backup. vzdump already sweeps the pgdata directory, but a filesystem
+  # snapshot of a running Postgres is crash-consistent rather than consistent -- it is what
+  # you would have if the power went out mid-write, and Postgres usually replays its WAL
+  # from that but not always. pg_dump reads inside a transaction and cannot have the
+  # problem, so the backup ends up holding both the raw directory and a known-good dump.
+  #
+  # Writes into the same tree vzdump already picks up, so there is nothing to configure on
+  # the Proxmox side.
+  backup:
+    image: postgres:18-alpine
+    container_name: podarium-backup
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://podarium:${DB_PASSWORD:?set DB_PASSWORD in the environment variables panel}@postgres:5432/podarium
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    volumes:
+      - /home/jworthington/docker/podarium/backups:/backups
+      - /home/jworthington/docker/podarium/pg-backup.sh:/usr/local/bin/pg-backup.sh:ro
+    # No cron in this image and no reason to add one: sleep, dump, repeat. A restart runs a
+    # dump immediately, which is the behaviour you want after touching the stack anyway.
+    entrypoint: ["/bin/sh", "-c", "while true; do /usr/local/bin/pg-backup.sh || echo 'backup failed'; sleep 86400; done"]
+
   api:
     # Multi-architecture: the same tag resolves to amd64 or arm64 by host, so this line
     # does not change if the stack ever moves. Published by .github/workflows/build.yml.
@@ -156,3 +181,22 @@ services:
 #    are the one thing here that grows without bound.
 #  - Migrate from PinePods with Settings -> Import OPML, then run both in parallel for a
 #    week. PinePods keeps its downloads at /mnt/nas/pinepods, so there is no conflict.
+#
+# ---------------------------------------------------------------------------------------
+# BACKUPS
+# ---------------------------------------------------------------------------------------
+#
+# The backup service needs its script on the host before the stack comes up. From the repo:
+#
+#     sudo mkdir -p /home/jworthington/docker/podarium/backups
+#     sudo curl -fsSL -o /home/jworthington/docker/podarium/pg-backup.sh \
+#       https://raw.githubusercontent.com/jwapps-app/podarium/main/scripts/pg-backup.sh
+#     sudo chmod +x /home/jworthington/docker/podarium/pg-backup.sh
+#
+# Check it worked:  ls -lh /home/jworthington/docker/podarium/backups
+# Restore one:      gunzip -c podarium-YYYYMMDD-HHMMSS.sql.gz | \
+#                     docker exec -i podarium-db psql -U podarium -d podarium
+#
+# Restoring into a database that already has tables will conflict -- drop and recreate it
+# first, or restore into a scratch database and compare. BACKUP_KEEP controls how many
+# nightly dumps are retained; the default is 14.

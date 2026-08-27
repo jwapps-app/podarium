@@ -31,6 +31,7 @@ class ParsedEpisode:
     enclosure_url: str | None = None
     enclosure_type: str | None = None
     enclosure_bytes: int | None = None
+    chapters_url: str | None = None
 
 
 @dataclass(slots=True)
@@ -128,6 +129,30 @@ def _entry_image(entry) -> str | None:
     return None
 
 
+def _chapters_url(entry: object) -> str | None:
+    """The ``podcast:chapters`` link, when the publisher supplies a JSON one.
+
+    feedparser has no mapping for the podcast namespace, so the element arrives as a
+    generic key with its attributes intact. Only the JSON type is taken: the spec allows
+    others in principle, and a URL we cannot parse is worse than none because it would
+    look like chapters exist right up until it is opened.
+    """
+    raw = entry.get("podcast_chapters") if hasattr(entry, "get") else None
+    if isinstance(raw, dict):
+        candidates = [raw]
+    elif isinstance(raw, list):
+        candidates = [item for item in raw if isinstance(item, dict)]
+    else:
+        return None
+
+    for item in candidates:
+        url = item.get("url") or item.get("href")
+        mime = (item.get("type") or "").lower()
+        if url and ("json" in mime or not mime):
+            return url
+    return None
+
+
 def parse_feed_bytes(raw: bytes) -> ParsedFeed:
     document = feedparser.parse(raw)
     channel = document.feed
@@ -174,6 +199,7 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
                 enclosure_url=enclosure.get("href"),
                 enclosure_type=enclosure.get("type"),
                 enclosure_bytes=_int_or_none(enclosure.get("length")),
+                chapters_url=_chapters_url(entry),
             )
         )
     return parsed

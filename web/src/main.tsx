@@ -5,6 +5,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
+import { registerServiceWorker } from "./lib/offline";
+import { OfflineProvider } from "./lib/offlineStore";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -29,8 +31,14 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <App />
+        <OfflineProvider>
+          <App />
+        </OfflineProvider>
       </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,
 );
+
+// After render, so registering never delays first paint. The worker only matters on the
+// second visit anyway -- there is nothing cached on the first.
+void registerServiceWorker();

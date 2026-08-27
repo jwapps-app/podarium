@@ -6,12 +6,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from podarium.auth import current_user
+from podarium.chapters import ensure_chapters
 from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
 from podarium.db import get_session
 from podarium.jobs.retention import purge_episode
 from podarium.models import Episode, EpisodeState, Feed, JobSource, User
-from podarium.schemas import EpisodeListOut, EpisodeOut, EpisodeStateUpdate, episode_out
-from podarium.services import enqueue_download
+from podarium.schemas import (
+    ChapterOut,
+    ChaptersOut,
+    EpisodeListOut,
+    EpisodeOut,
+    EpisodeStateUpdate,
+    episode_out,
+)
+from podarium.services import enqueue_download, get_app_settings
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -85,6 +93,7 @@ async def list_episodes(
     downloaded: bool | None = Query(default=None),
     starred: bool | None = Query(default=None),
     in_progress: bool | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
     since: datetime | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     cursor: str | None = Query(default=None),
@@ -164,6 +173,18 @@ async def list_episodes(
             (Episode.duration_seconds.is_(None))
             | (Episode.duration_seconds - state.position_seconds > IN_PROGRESS_MIN_REMAINING)
         )
+    if q and q.strip():
+        # Title and show name carry the answer nearly always; the description is included
+        # because a show that titles its episodes "#2545" puts every searchable word there.
+        #
+        # escape="\\" matters: a literal % or _ in the query would otherwise be a wildcard,
+        # so searching for "50%" would match everything containing "50".
+        needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        statement = statement.where(
+            Episode.title.ilike(needle, escape="\\")
+            | Feed.title.ilike(needle, escape="\\")
+            | Episode.description_html.ilike(needle, escape="\\")
+        )
     if since is not None:
         statement = statement.where(Episode.first_seen_at > since)
     if cursor:
@@ -195,6 +216,28 @@ async def get_episode(
     episode = await _get_episode_or_404(session, episode_id)
     state = await session.get(EpisodeState, {"user_id": user.id, "episode_id": episode_id})
     return episode_out(episode, state)
+
+
+@router.get("/{episode_id}/chapters", response_model=ChaptersOut)
+async def get_chapters(
+    episode_id: int,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ChaptersOut:
+    """Chapters for an episode, fetched by the server and cached on first request.
+
+    Returns an empty list rather than a 404 when a show publishes none, because "this show
+    has no chapters" is the ordinary answer and not an error the client should handle.
+    """
+    episode = await _get_episode_or_404(session, episode_id)
+    app_settings = await get_app_settings(session)
+    chapters = await ensure_chapters(session, episode, user_agent=app_settings.user_agent)
+    return ChaptersOut(
+        chapters=[
+            ChapterOut(start_seconds=chapter.start_seconds, title=chapter.title)
+            for chapter in chapters
+        ]
+    )
 
 
 @router.post("/{episode_id}/download", response_model=EpisodeOut, status_code=status.HTTP_202_ACCEPTED)

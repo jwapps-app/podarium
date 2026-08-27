@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import { usePlayer } from "../lib/player";
+import { useOffline } from "../lib/offlineStore";
 import { useEpisodeActions } from "../lib/queries";
 import { sanitizeHtml } from "../lib/sanitize";
 import { podlinkEpisodeUrl } from "../lib/share";
@@ -11,6 +12,7 @@ import { Artwork } from "./Artwork";
 import { ShareButton } from "./ShareButton";
 import {
   CheckIcon,
+  DeviceIcon,
   DownloadIcon,
   PauseIcon,
   PlayIcon,
@@ -36,6 +38,10 @@ export function EpisodeRow({ episode, showTitle, feedUrl, queued, isNew }: Props
   const actions = useEpisodeActions();
   const [expanded, setExpanded] = useState(false);
   const shareUrl = podlinkEpisodeUrl(feedUrl, episode.guid);
+
+  const offline = useOffline();
+  const onDevice = offline.saved.has(episode.id);
+  const savePending = offline.pending.has(episode.id);
 
   const isCurrent = player.episode?.id === episode.id;
   const isPlaying = isCurrent && player.playing;
@@ -162,6 +168,18 @@ export function EpisodeRow({ episode, showTitle, feedUrl, queued, isNew }: Props
         >
           {episode.downloaded ? <TrashIcon /> : <DownloadIcon />}
         </button>
+
+        {offline.supported && episode.downloaded ? (
+          <button
+            className={`btn-icon${onDevice ? " on" : ""}`}
+            title={onDevice ? "Remove from this device" : "Keep on this device for offline"}
+            aria-label={onDevice ? "Remove from this device" : "Keep on this device"}
+            disabled={savePending}
+            onClick={() => (onDevice ? offline.forget(episode.id) : offline.save(episode.id))}
+          >
+            {savePending ? <span className="spinner" /> : <DeviceIcon />}
+          </button>
+        ) : null}
 
         {shareUrl ? (
           <ShareButton

@@ -45,6 +45,9 @@ export interface Feed {
   effective_auto_download_count: number;
   retention_mode: RetentionMode | null;
   retention_days: number | null;
+  /** null inherits the global default; effective_playback_rate is what plays. */
+  playback_rate: number | null;
+  effective_playback_rate: number;
   active: boolean;
   last_fetched_at: string | null;
   fetch_error: string | null;
@@ -110,6 +113,17 @@ export interface SearchResult {
   already_subscribed: boolean;
 }
 
+export interface Chapter {
+  start_seconds: number;
+  title: string | null;
+}
+
+export interface PushConfig {
+  /** null when the server has no VAPID keys, so push cannot be offered. */
+  public_key: string | null;
+  subscribed: boolean;
+}
+
 export interface AppSettings {
   global_retention_mode: RetentionMode;
   global_retention_days: number;
@@ -155,6 +169,8 @@ export interface EpisodeFilters {
   starred?: boolean;
   /** Started, not finished, ordered by when you last listened. */
   in_progress?: boolean;
+  /** Free text over episode title, show title, and description. */
+  q?: string;
   since?: string;
   limit?: number;
   cursor?: string;

@@ -107,6 +107,12 @@ export const ShareIcon = (p: Props) => (
   <svg {...base} {...p}><path d="M12 3v13" /><path d="m7.5 7.5 4.5-4.5 4.5 4.5" /><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" /></svg>
 );
 
+/* A phone. Distinct from DownloadIcon on purpose: that one means "fetch to the server",
+   this one means "keep on this device", and they are genuinely different actions. */
+export const DeviceIcon = (p: Props) => (
+  <svg {...base} {...p}><rect x="7" y="2.5" width="10" height="19" rx="2.5" /><path d="M11 18.5h2" /></svg>
+);
+
 export const BrandMark = (p: Props) => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.9} strokeLinecap="round" {...p}>
     <path d="M12 14.5a3 3 0 0 0 3-3v-4a3 3 0 0 0-6 0v4a3 3 0 0 0 3 3z" />

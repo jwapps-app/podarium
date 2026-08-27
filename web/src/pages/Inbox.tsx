@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { EpisodeRow } from "../components/EpisodeRow";
 import { Empty, ErrorNotice, Loading } from "../components/Loading";
+import { useDebounced } from "../lib/debounce";
 import { isNewArrival } from "../lib/newness";
 import { useEpisodes, useFeedActions, useFeeds, useQueue } from "../lib/queries";
 
@@ -16,12 +17,15 @@ const FILTERS: { key: Filter; label: string }[] = [
 
 export function InboxPage() {
   const [filter, setFilter] = useState<Filter>("unplayed");
+  const [query, setQuery] = useState("");
+  const search = useDebounced(query, 250);
 
   const { data, isLoading, error } = useEpisodes({
     limit: 100,
     unplayed: filter === "unplayed" ? true : undefined,
     in_progress: filter === "in_progress" ? true : undefined,
     downloaded: filter === "downloaded" ? true : undefined,
+    q: search.trim() || undefined,
   });
   const { data: feeds } = useFeeds();
   const { data: queue } = useQueue();
@@ -59,6 +63,16 @@ export function InboxPage() {
         </div>
       </header>
 
+      <div className="search-row">
+        <input
+          type="search"
+          value={query}
+          placeholder="Search your subscriptions"
+          aria-label="Search episodes"
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </div>
+
       <div className="filters">
         {FILTERS.map((option) => (
           <button
@@ -78,7 +92,9 @@ export function InboxPage() {
       ) : !data || data.items.length === 0 ? (
         <Empty title="Nothing here">
           <p>
-            {filter === "unplayed"
+            {search.trim()
+              ? `Nothing matches “${search.trim()}”.`
+              : filter === "unplayed"
               ? "You are all caught up."
               : filter === "in_progress"
                 ? "Nothing half-finished. Episodes you pause partway through show up here."

@@ -35,6 +35,7 @@ async def _feed_out(session: AsyncSession, feed: Feed, user_id: int) -> FeedOut:
         unplayed_count=unplayed,
         new_episode_count=new,
         global_auto_download_count=app_settings.global_auto_download_count,
+        global_playback_rate=app_settings.default_playback_rate,
     )
 
 
@@ -57,6 +58,7 @@ async def list_feeds(
             unplayed_count=counts.get(f.id, (0, 0, 0))[1],
             new_episode_count=counts.get(f.id, (0, 0, 0))[2],
             global_auto_download_count=app_settings.global_auto_download_count,
+            global_playback_rate=app_settings.default_playback_rate,
         )
         for f in feeds
     ]
@@ -152,6 +154,11 @@ async def update_feed(
     elif body.retention_days is not None:
         feed.retention_days = body.retention_days
 
+    if body.clear_playback_rate:
+        feed.playback_rate = None
+    elif body.playback_rate is not None:
+        feed.playback_rate = body.playback_rate
+
     await session.commit()
 
     # Turning auto-download on has to do something now. It is otherwise only acted on
@@ -240,6 +247,63 @@ async def mark_seen(
     looked, I am not taking the rest" without marking anything played.
     """
     feed = await _get_feed_or_404(session, feed_id)
+    await mark_feed_seen(session, user.id, feed.id)
+    await session.commit()
+    return await _feed_out(session, feed, user.id)
+
+
+@router.post("/{feed_id}/played", response_model=FeedOut)
+async def mark_all_played(
+    feed_id: int,
+    played: bool = Query(default=True),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> FeedOut:
+    """Mark every episode of a show played, or unplayed.
+
+    The case this exists for is subscribing to a show with a long archive: a 2,700-episode
+    back catalogue is not 2,700 obligations, and without this the only way to clear it is
+    one episode at a time.
+
+    Deliberately does not touch position_seconds. Marking played is a statement about the
+    backlog, and wiping the position of the one episode you were halfway through would be a
+    surprising thing for a bulk action to do -- the resume list already ignores anything
+    played, so it drops out either way and the position is still there if you come back.
+    """
+    feed = await _get_feed_or_404(session, feed_id)
+
+    episode_ids = (
+        await session.execute(select(Episode.id).where(Episode.feed_id == feed.id))
+    ).scalars().all()
+
+    existing: dict[int, EpisodeState] = {}
+    if episode_ids:
+        rows = (
+            await session.execute(
+                select(EpisodeState)
+                .where(EpisodeState.user_id == user.id)
+                .where(EpisodeState.episode_id.in_(episode_ids))
+            )
+        ).scalars()
+        existing = {state.episode_id: state for state in rows}
+
+    now = datetime.now(UTC)
+    for episode_id in episode_ids:
+        state = existing.get(episode_id)
+        if state is None:
+            if not played:
+                # Nothing recorded is already not played; writing a row would say nothing.
+                continue
+            state = EpisodeState(user_id=user.id, episode_id=episode_id)
+            session.add(state)
+        if state.played == played:
+            continue
+        # completed_at is what after_played retention measures from, so it moves with the
+        # flag here exactly as it does for a single episode.
+        state.completed_at = now if played else None
+        state.played = played
+
+    # Marking the backlog played is also a way of saying you have looked at the show.
     await mark_feed_seen(session, user.id, feed.id)
     await session.commit()
     return await _feed_out(session, feed, user.id)

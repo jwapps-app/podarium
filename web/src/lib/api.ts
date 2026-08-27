@@ -1,12 +1,14 @@
 import type {
   ApiTokenSummary,
   AppSettings,
+  Chapter,
   CreatedApiToken,
   Episode,
   EpisodeFilters,
   EpisodeList,
   Feed,
   OpmlImportResult,
+  PushConfig,
   QueueItem,
   RetentionMode,
   SearchResult,
@@ -179,6 +181,9 @@ export const api = {
 
   refreshFeed: (id: number) => request<Feed>(`/api/feeds/${id}/refresh`, { method: "POST" }),
 
+  markFeedPlayed: (id: number, played: boolean) =>
+    request<Feed>(`/api/feeds/${id}/played?played=${played}`, { method: "POST" }),
+
   markFeedSeen: (id: number) => request<Feed>(`/api/feeds/${id}/seen`, { method: "POST" }),
 
   markAllFeedsSeen: () => request<void>("/api/feeds/seen", { method: "POST" }),
@@ -188,6 +193,9 @@ export const api = {
     request<EpisodeList>(`/api/episodes${query({ ...filters })}`),
 
   episode: (id: number) => request<Episode>(`/api/episodes/${id}`),
+
+  chapters: (id: number) =>
+    request<{ chapters: Chapter[] }>(`/api/episodes/${id}/chapters`),
 
   download: (id: number) =>
     request<Episode>(`/api/episodes/${id}/download`, { method: "POST" }),
@@ -229,6 +237,19 @@ export const api = {
   settings: () => request<AppSettings>("/api/settings"),
 
   storage: () => request<Storage>("/api/storage"),
+
+  // -- push notifications ------------------------------------------------------
+  pushConfig: () => request<PushConfig>("/api/push/config"),
+
+  pushSubscribe: (body: { endpoint: string; p256dh: string; auth: string; label?: string }) =>
+    request<{ id: number }>("/api/push", { method: "POST", body: JSON.stringify(body) }),
+
+  pushUnsubscribe: (endpoint?: string) =>
+    request<void>(`/api/push${endpoint ? `?endpoint=${encodeURIComponent(endpoint)}` : ""}`, {
+      method: "DELETE",
+    }),
+
+  pushTest: () => request<PushConfig>("/api/push/test", { method: "POST" }),
 
   updateSettings: (body: Partial<AppSettings> & { clear_download_dir_max_bytes?: boolean }) =>
     request<AppSettings>("/api/settings", { method: "PUT", body: JSON.stringify(body) }),

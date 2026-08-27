@@ -149,6 +149,7 @@ async def sync(
                 unplayed_count=counts.get(feed.id, (0, 0, 0))[1],
                 new_episode_count=counts.get(feed.id, (0, 0, 0))[2],
                 global_auto_download_count=app_settings.global_auto_download_count,
+            global_playback_rate=app_settings.default_playback_rate,
             )
             for feed in changed_feeds
         ],

@@ -7,6 +7,7 @@ import { RefreshIcon } from "../components/Icons";
 import { Empty, ErrorNotice, Loading } from "../components/Loading";
 import { formatRelativeExact } from "../lib/format";
 import { isNewArrival } from "../lib/newness";
+import { PLAYBACK_RATES } from "../lib/player";
 import { useEpisodes, useFeed, useFeedActions, useQueue, useSettings } from "../lib/queries";
 import { toPlainText } from "../lib/sanitize";
 import type { RetentionMode } from "../lib/types";
@@ -96,6 +97,23 @@ export function FeedDetailPage() {
             <button className="btn" onClick={() => setShowSettings((value) => !value)}>
               {showSettings ? "Hide settings" : "Settings"}
             </button>
+            <button
+              className="btn"
+              disabled={actions.markAllPlayed.isPending}
+              onClick={() => {
+                // Confirmed because it touches every episode and there is no undo beyond
+                // running it back the other way.
+                if (
+                  window.confirm(
+                    `Mark all ${feed.episode_count ?? 0} episodes of ${feed.title ?? "this show"} as played?`,
+                  )
+                ) {
+                  actions.markAllPlayed.mutate({ id: feed.id, played: true });
+                }
+              }}
+            >
+              {actions.markAllPlayed.isPending ? "Marking…" : "Mark all played"}
+            </button>
             <button className="btn btn-danger" onClick={() => unsubscribe(true)}>
               Unsubscribe
             </button>
@@ -116,6 +134,7 @@ export function FeedDetailPage() {
           globalMode={globals?.global_retention_mode}
           globalDays={globals?.global_retention_days}
           globalAutoDownload={globals?.global_auto_download_count}
+          globalRate={globals?.default_playback_rate}
           onSave={(body) => actions.update.mutate({ id: feed.id, ...body })}
           saving={actions.update.isPending}
         />
@@ -162,11 +181,13 @@ interface SettingsProps {
     auto_download_count: number | null;
     retention_mode: RetentionMode | null;
     retention_days: number | null;
+    playback_rate: number | null;
     active: boolean;
   };
   globalMode: RetentionMode | undefined;
   globalDays: number | undefined;
   globalAutoDownload: number | undefined;
+  globalRate: number | undefined;
   saving: boolean;
   onSave: (body: {
     auto_download_count?: number;
@@ -176,6 +197,8 @@ interface SettingsProps {
     clear_retention_mode?: boolean;
     clear_retention_days?: boolean;
     clear_auto_download_count?: boolean;
+    playback_rate?: number;
+    clear_playback_rate?: boolean;
   }) => void;
 }
 
@@ -190,6 +213,7 @@ function FeedSettings({
   globalMode,
   globalDays,
   globalAutoDownload,
+  globalRate,
   saving,
   onSave,
 }: SettingsProps) {
@@ -201,6 +225,9 @@ function FeedSettings({
   const [mode, setMode] = useState<RetentionMode | "">(feed.retention_mode ?? "");
   const [days, setDays] = useState(feed.retention_days === null ? "" : String(feed.retention_days));
   const [active, setActive] = useState(feed.active);
+  // "" is inherit here too. Speed is the setting that varies most by show: a dense
+  // interview holds up at 1.5x where a scripted narrative does not.
+  const [rate, setRate] = useState(feed.playback_rate === null ? "" : String(feed.playback_rate));
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -211,6 +238,7 @@ function FeedSettings({
       active,
       ...(mode === "" ? { clear_retention_mode: true } : { retention_mode: mode }),
       ...(days === "" ? { clear_retention_days: true } : { retention_days: Number(days) }),
+      ...(rate === "" ? { clear_playback_rate: true } : { playback_rate: Number(rate) }),
     });
   };
 
@@ -265,6 +293,24 @@ function FeedSettings({
             value={days}
             onChange={(event) => setDays(event.target.value)}
           />
+        </div>
+      </div>
+
+      <div className="field">
+        <label htmlFor="feed-rate">Playback speed</label>
+        <select id="feed-rate" value={rate} onChange={(event) => setRate(event.target.value)}>
+          <option value="">
+            {globalRate === undefined ? "Inherit global" : `Inherit global (${globalRate}\u00d7)`}
+          </option>
+          {PLAYBACK_RATES.map((value) => (
+            <option key={value} value={value}>
+              {value}&times;
+            </option>
+          ))}
+        </select>
+        <div className="field-hint">
+          Every episode of this show starts at this speed. The player&rsquo;s speed button
+          still overrides it for the episode you are listening to.
         </div>
       </div>
 

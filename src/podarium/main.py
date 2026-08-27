@@ -29,6 +29,7 @@ from podarium.api import (
     queue_routes,
     search_routes,
     settings_routes,
+    push_routes,
     storage_routes,
     sync_routes,
 )
@@ -142,6 +143,7 @@ for module in (
     sync_routes,
     settings_routes,
     storage_routes,
+    push_routes,
     opml_routes,
 ):
     app.include_router(module.router)

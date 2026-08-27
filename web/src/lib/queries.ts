@@ -72,6 +72,11 @@ export function useFeedActions() {
     refresh: useMutation({ mutationFn: (id: number) => api.refreshFeed(id), onSettled }),
     markSeen: useMutation({ mutationFn: (id: number) => api.markFeedSeen(id), onSettled }),
     markAllSeen: useMutation({ mutationFn: () => api.markAllFeedsSeen(), onSettled }),
+    markAllPlayed: useMutation({
+      mutationFn: ({ id, played }: { id: number; played: boolean }) =>
+        api.markFeedPlayed(id, played),
+      onSettled,
+    }),
     update: useMutation({
       mutationFn: ({ id, ...body }: { id: number } & Parameters<typeof api.updateFeed>[1]) =>
         api.updateFeed(id, body),

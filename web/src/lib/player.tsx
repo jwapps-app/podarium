@@ -48,6 +48,12 @@ interface PlayerValue {
   stop: () => void;
   /** Registered by the queue so the player can advance when an episode finishes. */
   setAdvanceHandler: (handler: (() => Episode | null) | null) => void;
+  /** Minutes remaining on the sleep timer, or null when none is running. */
+  sleepMinutes: number | null;
+  /** Whether playback stops at the end of the current episode. */
+  sleepAtEnd: boolean;
+  /** Minutes, or "episode" to stop at the end of what is playing, or null to cancel. */
+  setSleepTimer: (minutes: number | "episode" | null) => void;
 }
 
 const PlayerContext = createContext<PlayerValue | null>(null);
@@ -71,6 +77,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // this session -- a saved default should not yank the speed out from under someone who
   // has just adjusted it mid-episode.
   const rateTouchedRef = useRef(false);
+
+  // Sleep timer. Held as a deadline rather than a countdown so that a tab suspended in the
+  // background -- which a phone does constantly -- wakes up with the correct time left
+  // instead of however far the interval happened to get.
+  const [sleepUntil, setSleepUntil] = useState<number | null>(null);
+  const [sleepMinutes, setSleepMinutes] = useState<number | null>(null);
+  // Mirrored as state for display and held in a ref for the ended handler, which must
+  // read the current value without the effect being torn down and rebuilt each time.
+  const [sleepAtEnd, setSleepAtEnd] = useState(false);
+  const sleepAtEndRef = useRef(false);
 
   // Kept in refs so the reporting effect does not tear down and restart on every tick.
   const episodeRef = useRef<Episode | null>(null);
@@ -135,8 +151,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const audio = audioRef.current;
       if (!audio) return;
 
+      const previous = episodeRef.current;
+
       // Switching episodes: bank the outgoing position before the src changes.
-      if (episodeRef.current && episodeRef.current.id !== next.id) {
+      if (previous && previous.id !== next.id) {
         reportPosition(audio.currentTime, { force: true });
       }
 
@@ -152,6 +170,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setPosition(next.position_seconds);
       setDuration(next.duration_seconds ?? 0);
       lastReportedRef.current = next.position_seconds;
+
+      // Moving to a different show adopts that show's speed. Moving within one show does
+      // not: the queue advancing to the next episode of the same podcast should not undo a
+      // speed you just chose, but arriving at a different podcast should not inherit it.
+      if (previous?.feed_id !== next.feed_id) {
+        const showRate = feedRatesRef.current.get(next.feed_id);
+        if (showRate) {
+          rateRef.current = showRate;
+          setPlaybackRateState(showRate);
+          // A show's own setting outranks the global default, so stop that effect
+          // reapplying the global over the top when settings resolve.
+          rateTouchedRef.current = true;
+        }
+      }
 
       audio.src = next.stream_url;
       audio.load();
@@ -216,6 +248,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const { data: appSettings } = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const defaultRate = appSettings?.default_playback_rate;
 
+  // Per-show speed, resolved when an episode is cued. Held in a ref so cue() can read the
+  // current map without being rebuilt -- and therefore re-cueing -- every time feeds refetch.
+  // Populated from the feeds query further down, which the lock screen already needs.
+  const feedRatesRef = useRef(new Map<number, number>());
+
   // Come back up holding whatever was playing when the app was last closed.
   //
   // Position has always been saved server-side, but nothing remembered *which* episode, so
@@ -266,6 +303,48 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setExpanded(false);
   }, [reportPosition]);
 
+  const setSleepTimer = useCallback((minutes: number | "episode" | null) => {
+    if (minutes === null) {
+      sleepAtEndRef.current = false;
+      setSleepAtEnd(false);
+      setSleepUntil(null);
+      setSleepMinutes(null);
+      return;
+    }
+    if (minutes === "episode") {
+      // Handled by the ended handler rather than a clock: "finish this episode" has no
+      // duration until you know how much is left, and the answer changes if you seek.
+      sleepAtEndRef.current = true;
+      setSleepAtEnd(true);
+      setSleepUntil(null);
+      setSleepMinutes(null);
+      return;
+    }
+    sleepAtEndRef.current = false;
+    setSleepAtEnd(false);
+    setSleepUntil(Date.now() + minutes * 60_000);
+    setSleepMinutes(minutes);
+  }, []);
+
+  // Pause when the deadline passes. Ticks once a second, which is enough for a display
+  // rounded to minutes and cheap enough not to care about.
+  useEffect(() => {
+    if (sleepUntil === null) return;
+    const tick = window.setInterval(() => {
+      const remaining = sleepUntil - Date.now();
+      if (remaining <= 0) {
+        audioRef.current?.pause();
+        sleepAtEndRef.current = false;
+        setSleepAtEnd(false);
+        setSleepUntil(null);
+        setSleepMinutes(null);
+        return;
+      }
+      setSleepMinutes(Math.ceil(remaining / 60_000));
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [sleepUntil]);
+
   const setAdvanceHandler = useCallback((handler: (() => Episode | null) | null) => {
     advanceRef.current = handler;
   }, []);
@@ -293,6 +372,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onEnded = () => {
       setPlaying(false);
       reportPosition(audio.duration || 0, { played: true, force: true });
+      if (sleepAtEndRef.current) {
+        // "Stop at the end of this episode" means this one, so it also cancels the
+        // auto-advance that would otherwise start the next thing in the queue.
+        sleepAtEndRef.current = false;
+        setSleepAtEnd(false);
+        return;
+      }
       const next = advanceRef.current?.() ?? null;
       if (next) play(next);
     };
@@ -371,10 +457,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   rateRef.current = playbackRate;
 
-  // The feed is only needed for the show name the lock screen shows as the artist.
+  // Feeds carry the show name the lock screen shows as the artist, and the per-show speed
+  // that cue() applies.
   const { data: feeds } = useQuery({ queryKey: ["feeds"], queryFn: api.feeds });
   const showTitle =
     feeds?.find((candidate) => candidate.id === episode?.feed_id)?.title ?? null;
+
+  useEffect(() => {
+    feedRatesRef.current = new Map(
+      (feeds ?? []).map((feed) => [feed.id, feed.effective_playback_rate]),
+    );
+  }, [feeds]);
 
   useMediaSession({
     episode,
@@ -407,10 +500,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setExpanded,
       stop,
       setAdvanceHandler,
+      sleepMinutes,
+      sleepAtEnd,
+      setSleepTimer,
     }),
     [
       episode, playing, position, duration, buffering, error, playbackRate, expanded,
       play, toggle, seek, skip, setPlaybackRate, stop, setAdvanceHandler,
+      sleepMinutes, sleepAtEnd, setSleepTimer,
     ],
   );
 

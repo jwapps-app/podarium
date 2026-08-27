@@ -19,6 +19,9 @@ dependencies = [
     "pydantic-settings>=2.7",
     "prometheus-client>=0.21",
     "python-multipart>=0.0.20",
+    # Web Push: VAPID signing and aes128gcm payload encryption. Only the encoding is used;
+    # the request itself goes out through the one HTTP client like everything else.
+    "pywebpush>=2.0",
 ]
 
 [project.optional-dependencies]
