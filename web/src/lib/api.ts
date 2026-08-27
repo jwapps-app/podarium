@@ -8,6 +8,7 @@ import type {
   EpisodeList,
   Feed,
   OpmlImportResult,
+  Preview,
   PushConfig,
   QueueItem,
   RetentionMode,
@@ -154,6 +155,9 @@ export const api = {
 
   resolveFeedUrl: (url: string) =>
     request<SearchResult>(`/api/search/byfeedurl${query({ url })}`),
+
+  preview: (feedUrl: string) =>
+    request<Preview>(`/api/search/preview?url=${encodeURIComponent(feedUrl)}`),
 
   subscribe: (body: { feed_url?: string; podcast_index_id?: number }) =>
     request<Feed>("/api/feeds", { method: "POST", body: JSON.stringify(body) }),

@@ -95,6 +95,16 @@ Generate a separate pair for local development rather than reusing the server's.
 On iOS, web push only works once Podarium has been added to the Home Screen, and only over
 HTTPS. On the LAN over plain HTTP it will not be offered at all.
 
+## Notification volume
+
+Cadence decides whether this feature survives. A show publishing hourly produces a
+notification every hour around the clock, which buries the weekly show you actually wanted
+telling about — and the only remaining control is switching notifications off entirely.
+
+Each show therefore has its own toggle, on by default, under Settings on the show's page.
+Turning it off silences the alert; episodes still arrive, download, and appear in the inbox
+exactly as before.
+
 ## Offline
 
 Podarium streams from the server by design, so with no network there is nothing to play.

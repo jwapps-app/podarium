@@ -1,11 +1,12 @@
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 
 import { Artwork } from "../components/Artwork";
-import { Empty } from "../components/Loading";
+import { Empty, ErrorNotice, Loading } from "../components/Loading";
 import { ApiError, api } from "../lib/api";
 import { useFeedActions } from "../lib/queries";
+import { formatDate, formatDuration } from "../lib/format";
 import { toPlainText } from "../lib/sanitize";
 import type { SearchResult } from "../lib/types";
 
@@ -17,6 +18,9 @@ export function SearchPage() {
   const [feedUrl, setFeedUrl] = useState("");
   const [results, setResults] = useState<SearchResult[] | null>(null);
   const [searchError, setSearchError] = useState<ApiError | Error | null>(null);
+  // The feed URL being looked at, or null. Held here rather than routed, so closing the
+  // preview returns to the results you searched for instead of losing them.
+  const [previewing, setPreviewing] = useState<string | null>(null);
 
   const search = useMutation({
     mutationFn: (q: string) => api.search(q),
@@ -157,9 +161,13 @@ export function SearchPage() {
                     fallbackText={result.title}
                   />
                   <div className="episode-body">
-                    <div className="episode-title" style={{ cursor: "default" }}>
+                    <button
+                      className="episode-title"
+                      onClick={() => setPreviewing(result.feed_url)}
+                      title="Look at this show before subscribing"
+                    >
                       {result.title ?? result.feed_url}
-                    </div>
+                    </button>
                     <div className="episode-meta">
                       {result.author ? <span>{result.author}</span> : null}
                       {result.episode_count ? (
@@ -175,9 +183,15 @@ export function SearchPage() {
                       </p>
                     ) : null}
                   </div>
-                  <div className="episode-actions">
+                  <div className="episode-actions" style={{ alignItems: "center", gap: 6 }}>
+                    {/* Details sits before Subscribe deliberately: subscribing is the
+                        commitment, and the button you reach first should be the one that
+                        only shows you something. */}
+                    <button className="btn btn-sm" onClick={() => setPreviewing(result.feed_url)}>
+                      Details
+                    </button>
                     {result.already_subscribed ? (
-                      <span className="tag" style={{ alignSelf: "center" }}>Subscribed</span>
+                      <span className="tag">Subscribed</span>
                     ) : (
                       <button
                         className="btn btn-sm btn-primary"
@@ -194,6 +208,127 @@ export function SearchPage() {
           </div>
         )
       ) : null}
+
+      {previewing ? (
+        <PreviewPanel
+          feedUrl={previewing}
+          onClose={() => setPreviewing(null)}
+          onSubscribe={(url) => {
+            subscribe({ feed_url: url } as SearchResult);
+            setPreviewing(null);
+          }}
+          subscribing={feedActions.subscribe.isPending}
+        />
+      ) : null}
     </>
+  );
+}
+
+/** A show, before you commit to it.
+ *
+ *  Over the page rather than on a route, for the same reason Now Playing is: opening it
+ *  should not lose the search results underneath, and closing it should not mean backing
+ *  out of a history entry.
+ */
+function PreviewPanel({
+  feedUrl,
+  onClose,
+  onSubscribe,
+  subscribing,
+}: {
+  feedUrl: string;
+  onClose: () => void;
+  onSubscribe: (feedUrl: string) => void;
+  subscribing: boolean;
+}) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["preview", feedUrl],
+    queryFn: () => api.preview(feedUrl),
+    // The server fetches the publisher's feed to answer this, so looking at the same show
+    // twice in one session should not fetch it twice.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <div className="preview-scrim" onClick={onClose}>
+      <div
+        className="preview"
+        role="dialog"
+        aria-label="Show details"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="preview-head">
+          <button className="btn btn-sm" onClick={onClose}>
+            Close
+          </button>
+          {data && !data.already_subscribed ? (
+            <button
+              className="btn btn-sm btn-primary"
+              disabled={subscribing}
+              onClick={() => onSubscribe(data.feed_url)}
+            >
+              {subscribing ? "Adding…" : "Subscribe"}
+            </button>
+          ) : data ? (
+            <span className="tag">Subscribed</span>
+          ) : null}
+        </header>
+
+        {isLoading ? (
+          <Loading label="Loading show" />
+        ) : error ? (
+          <ErrorNotice error={error} />
+        ) : !data ? null : (
+          <>
+            <div className="preview-top">
+              <Artwork
+                className="preview-art"
+                src={data.image_url}
+                alt=""
+                fallbackText={data.title}
+              />
+              <div style={{ minWidth: 0 }}>
+                <h1 className="page-title">{data.title ?? data.feed_url}</h1>
+                <div className="episode-meta">
+                  {data.author ? <span>{data.author}</span> : null}
+                  <span className="dot">·</span>
+                  <span>{data.episode_count} episodes</span>
+                </div>
+                {data.description ? (
+                  <p className="preview-description">{toPlainText(data.description, 700)}</p>
+                ) : null}
+              </div>
+            </div>
+
+            <h2 className="np-section-title" style={{ marginTop: 20 }}>
+              Recent episodes
+            </h2>
+            {data.episodes.map((episode) => (
+              <div className="preview-episode" key={episode.guid}>
+                <div className="preview-episode-title">{episode.title ?? "Untitled"}</div>
+                <div className="episode-meta">
+                  {episode.published_at ? <span>{formatDate(episode.published_at)}</span> : null}
+                  {episode.duration_seconds ? (
+                    <>
+                      <span className="dot">·</span>
+                      <span>{formatDuration(episode.duration_seconds)}</span>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

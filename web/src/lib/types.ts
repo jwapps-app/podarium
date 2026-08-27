@@ -48,6 +48,8 @@ export interface Feed {
   /** null inherits the global default; effective_playback_rate is what plays. */
   playback_rate: number | null;
   effective_playback_rate: number;
+  /** Whether new episodes of this show are worth a notification. */
+  notify: boolean;
   active: boolean;
   last_fetched_at: string | null;
   fetch_error: string | null;
@@ -122,6 +124,26 @@ export interface PushConfig {
   /** null when the server has no VAPID keys, so push cannot be offered. */
   public_key: string | null;
   subscribed: boolean;
+}
+
+export interface PreviewEpisode {
+  guid: string;
+  title: string | null;
+  published_at: string | null;
+  duration_seconds: number | null;
+  description_html: string | null;
+}
+
+export interface Preview {
+  title: string | null;
+  author: string | null;
+  description: string | null;
+  feed_url: string;
+  image_url: string | null;
+  link: string | null;
+  episode_count: number;
+  already_subscribed: boolean;
+  episodes: PreviewEpisode[];
 }
 
 export interface AppSettings {

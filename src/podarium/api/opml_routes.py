@@ -57,7 +57,7 @@ def _extract_feed_urls(raw: bytes) -> list[str]:
     try:
         root = ET.fromstring(raw)
     except ET.ParseError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Invalid OPML: {exc}") from exc
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Invalid OPML: {exc}") from exc
 
     urls: list[str] = []
     seen: set[str] = set()
@@ -81,7 +81,7 @@ async def import_opml(
     """Accepts either a multipart upload or a raw OPML body."""
     raw = await file.read() if file is not None else await request.body()
     if not raw:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty OPML body")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Empty OPML body")
     if len(raw) > MAX_OPML_BYTES:
         raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="OPML file too large")
 

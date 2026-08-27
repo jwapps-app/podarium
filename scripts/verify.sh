@@ -306,6 +306,43 @@ RESUME_CHECK
     -d '{"played": true, "position_seconds": 0}' -o /dev/null
 fi
 
+step "preview before subscribing"
+# Previewing a feed this server already has proves the shape without needing an outside
+# show, and lets the run assert the thing that matters: nothing was written.
+FEED_BEFORE="$(api "$BASE/api/feeds" | json 'len(d)')"
+FEED_SRC="$(api "$BASE/api/feeds/$FEED_ID" | json 'd["feed_url"]')"
+api --get --data-urlencode "url=$FEED_SRC" "$BASE/api/search/preview" > "$TMP/preview.json"
+python3 - "$TMP/preview.json" <<'PREVIEW' || fail "preview is wrong"
+import json, sys
+
+body = json.load(open(sys.argv[1]))
+assert body["already_subscribed"] is True, "a subscribed feed previewed as available"
+assert body["episodes"], "preview returned no episodes"
+assert body["image_url"] is None or body["image_url"].startswith("/api/images/"), body["image_url"]
+# No enclosure may appear: the browser must not be handed a publisher URL for a show that
+# has not even been subscribed to.
+assert ".mp3" not in json.dumps(body["episodes"]), "an enclosure URL leaked into a preview"
+PREVIEW
+[ "$(api "$BASE/api/feeds" | json 'len(d)')" = "$FEED_BEFORE" ] || fail "preview changed the library"
+pass "preview reads a feed without writing anything"
+
+# A web page is not a feed, and feedparser will happily accept one.
+[ "$(code --get --data-urlencode "url=$BASE/" "$BASE/api/search/preview")" = 422 ] \
+  || fail "an HTML page was accepted as a feed"
+pass "a page that is not a feed is rejected"
+
+step "per-show notifications"
+NOTIFY_BEFORE="$(api "$BASE/api/feeds/$FEED_ID" | json 'd["notify"]')"
+[ "$NOTIFY_BEFORE" = True ] || fail "a subscribed show defaulted to not notifying"
+api -X PATCH "$BASE/api/feeds/$FEED_ID" -H 'content-type: application/json' \
+  -d '{"notify": false}' | json 'd["notify"]' | grep -q False || fail "notify did not turn off"
+# An unrelated patch must not switch it back on.
+api -X PATCH "$BASE/api/feeds/$FEED_ID" -H 'content-type: application/json' \
+  -d '{"active": true}' | json 'd["notify"]' | grep -q False || fail "an unrelated patch reset notify"
+api -X PATCH "$BASE/api/feeds/$FEED_ID" -H 'content-type: application/json' \
+  -d '{"notify": true}' > /dev/null
+pass "per-show notifications default on and survive unrelated edits"
+
 step "library search"
 # Asserted against the run's own feed rather than a fixed word: whatever this server is
 # subscribed to, searching its title must return its episodes and nothing else's.

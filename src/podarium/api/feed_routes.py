@@ -91,7 +91,7 @@ async def create_feed(
 
     if not feed_url:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Provide either feed_url or podcast_index_id",
         )
 
@@ -141,6 +141,9 @@ async def update_feed(
 
     if body.active is not None:
         feed.active = body.active
+
+    if body.notify is not None:
+        feed.notify = body.notify
 
     # NULL means "inherit the global", so clearing needs an explicit flag rather than
     # being inferred from an omitted field.

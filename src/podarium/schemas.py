@@ -83,6 +83,33 @@ class SearchResultOut(BaseModel):
     already_subscribed: bool = False
 
 
+class PreviewEpisodeOut(BaseModel):
+    """One episode as it appears before subscribing.
+
+    Deliberately carries no enclosure URL. Preview answers "is this the show I want", which
+    needs titles and dates and nothing else -- and an enclosure here would be a publisher
+    URL handed to a client for a show this server has not even subscribed to.
+    """
+
+    guid: str
+    title: str | None
+    published_at: datetime | None
+    duration_seconds: int | None
+    description_html: str | None
+
+
+class PreviewOut(BaseModel):
+    title: str | None
+    author: str | None
+    description: str | None
+    feed_url: str
+    image_url: str | None
+    link: str | None
+    episode_count: int
+    already_subscribed: bool
+    episodes: list[PreviewEpisodeOut]
+
+
 class FeedCreateRequest(BaseModel):
     feed_url: str | None = None
     podcast_index_id: int | None = None
@@ -93,6 +120,7 @@ class FeedUpdateRequest(BaseModel):
     retention_mode: RetentionMode | None = None
     retention_days: int | None = Field(default=None, ge=0)
     playback_rate: float | None = Field(default=None, gt=0, le=5)
+    notify: bool | None = None
     active: bool | None = None
     # NULL is meaningful on these columns (it means "inherit the global"), so an explicit
     # clear needs its own flag rather than being confused with "field omitted".
@@ -122,6 +150,7 @@ class FeedOut(BaseModel):
     # As above: None inherits the global default, effective_playback_rate is what plays.
     playback_rate: float | None
     effective_playback_rate: float
+    notify: bool
     active: bool
     last_fetched_at: datetime | None
     fetch_error: str | None
@@ -289,6 +318,7 @@ def feed_out(
         ),
         retention_mode=feed.retention_mode,
         retention_days=feed.retention_days,
+        notify=feed.notify,
         playback_rate=feed.playback_rate,
         effective_playback_rate=(
             feed.playback_rate if feed.playback_rate is not None else global_playback_rate

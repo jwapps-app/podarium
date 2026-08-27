@@ -182,6 +182,7 @@ interface SettingsProps {
     retention_mode: RetentionMode | null;
     retention_days: number | null;
     playback_rate: number | null;
+    notify: boolean;
     active: boolean;
   };
   globalMode: RetentionMode | undefined;
@@ -199,6 +200,7 @@ interface SettingsProps {
     clear_auto_download_count?: boolean;
     playback_rate?: number;
     clear_playback_rate?: boolean;
+    notify?: boolean;
   }) => void;
 }
 
@@ -225,6 +227,7 @@ function FeedSettings({
   const [mode, setMode] = useState<RetentionMode | "">(feed.retention_mode ?? "");
   const [days, setDays] = useState(feed.retention_days === null ? "" : String(feed.retention_days));
   const [active, setActive] = useState(feed.active);
+  const [notify, setNotify] = useState(feed.notify);
   // "" is inherit here too. Speed is the setting that varies most by show: a dense
   // interview holds up at 1.5x where a scripted narrative does not.
   const [rate, setRate] = useState(feed.playback_rate === null ? "" : String(feed.playback_rate));
@@ -239,6 +242,7 @@ function FeedSettings({
       ...(mode === "" ? { clear_retention_mode: true } : { retention_mode: mode }),
       ...(days === "" ? { clear_retention_days: true } : { retention_days: Number(days) }),
       ...(rate === "" ? { clear_playback_rate: true } : { playback_rate: Number(rate) }),
+      notify,
     });
   };
 
@@ -312,6 +316,16 @@ function FeedSettings({
           Every episode of this show starts at this speed. The player&rsquo;s speed button
           still overrides it for the episode you are listening to.
         </div>
+      </div>
+
+      <label className="check">
+        <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
+        Notify me about new episodes of this show
+      </label>
+      <div className="field-hint" style={{ marginTop: -6, marginBottom: 14 }}>
+        Worth turning off for anything that publishes daily or hourly. One show at that
+        cadence produces a notification around the clock and buries every other show&rsquo;s.
+        New episodes still arrive either way — this only silences the alert.
       </div>
 
       <label className="check" style={{ marginBottom: 16 }}>

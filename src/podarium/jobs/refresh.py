@@ -358,7 +358,7 @@ async def refresh_due_feeds() -> int:
                 continue
             outcome = await refresh_feed(session, fresh, user_agent=user_agent)
             refreshed += 1
-            if outcome.new_episodes:
+            if outcome.new_episodes and fresh.notify:
                 arrivals.append((fresh.title or fresh.feed_url, outcome.new_episodes))
 
     if arrivals:

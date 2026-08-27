@@ -28,6 +28,9 @@ def test_feed_output_rewrites_artwork_to_a_local_path():
         auto_download_count=0,
         fetch_error_count=0,
         active=True,
+        # Set explicitly, like active above: column defaults are applied on flush, and this
+        # feed is never flushed.
+        notify=True,
         **STAMPS,
     )
     payload = feed_out(feed).model_dump()

@@ -248,7 +248,7 @@ async def request_download(
 ) -> EpisodeOut:
     episode = await _get_episode_or_404(session, episode_id)
     if not episode.enclosure_url:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Episode has no audio enclosure")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Episode has no audio enclosure")
     await enqueue_download(session, episode, JobSource.manual)
     await session.commit()
     state = await session.get(EpisodeState, {"user_id": user.id, "episode_id": episode_id})

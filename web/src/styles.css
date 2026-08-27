@@ -456,6 +456,18 @@ h1, h2, h3 { line-height: 1.25; margin: 0; }
 
 .episode-title:hover { color: var(--accent); }
 
+/* Search results make the title a real <button> rather than an h3 with role="button", so
+   it is focusable and announced correctly without hand-rolled key handling. That means
+   stripping the browser's own button chrome, which the global reset leaves alone. */
+button.episode-title {
+  background: none;
+  border: none;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+}
+
+
 .episode-meta {
   display: flex;
   align-items: center;
@@ -1229,3 +1241,64 @@ button.player-title:hover { color: var(--accent); }
 /* Library search. Full width because a query is the whole point of the row it sits in. */
 .search-row { margin-bottom: 14px; }
 .search-row input { width: 100%; }
+
+/* Show preview. Over the page rather than a route, so the results you searched for are
+   still underneath when it closes. */
+.preview-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+}
+
+.preview {
+  width: min(760px, 100%);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  padding: 20px;
+}
+
+.preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.preview-top { display: flex; gap: 16px; align-items: flex-start; }
+
+.preview-art {
+  width: 132px;
+  height: 132px;
+  flex: none;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+}
+
+.preview-art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.preview-description {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.preview-episode { padding: 9px 0; border-top: 1px solid var(--border); }
+.preview-episode-title { font-size: 13.5px; font-weight: 560; margin-bottom: 3px; }
+
+@media (max-width: 560px) {
+  .preview-scrim { padding: 16px 10px; }
+  .preview-top { flex-direction: column; }
+  .preview-art { width: 108px; height: 108px; }
+}

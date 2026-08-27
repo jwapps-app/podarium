@@ -116,7 +116,7 @@ async def reorder_queue(
     unknown = [eid for eid in body.episode_ids if eid not in items]
     if unknown:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Not in queue: {unknown}"
+            status.HTTP_422_UNPROCESSABLE_CONTENT, detail=f"Not in queue: {unknown}"
         )
 
     for index, episode_id in enumerate(body.episode_ids):

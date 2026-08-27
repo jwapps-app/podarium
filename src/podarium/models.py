@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -139,6 +140,17 @@ class Feed(Base):
     playback_rate: Mapped[float | None] = mapped_column(Float)
 
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Whether new episodes of this show are worth a notification.
+    #
+    # A plain boolean rather than the inherit-or-override shape used above, because there is
+    # no useful global to inherit: the answer is per-show by nature. An hourly news bulletin
+    # and a weekly three-hour interview are not the same event, and a daily show left on
+    # will drown every other show's notification and take the feature down with it.
+    notify: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+
     created_at: Mapped[datetime] = _now_col(nullable=False)
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
 
