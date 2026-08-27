@@ -75,12 +75,18 @@ one container and one port for both the API and the UI.
 
 ## Notifications
 
-Off unless the server has a VAPID keypair. Generate one, put both halves in the environment,
-and restart:
+Off unless the server has a VAPID keypair. Generate one, paste the three lines it prints
+into the environment, and restart:
 
 ```bash
-python -m podarium.vapid
+docker exec podarium-api python -m podarium.vapid
 ```
+
+The private key prints base64-encoded rather than as a PEM. Both are read, along with a PEM
+whose newlines are written as `\n` — but this value has to cross a Portainer environment
+panel, and a multi-line PEM full of newlines and slashes is exactly the shape that arrives
+truncated. A mangled key says so on sight rather than surfacing later as a push that never
+lands.
 
 Browsers pin the public key at subscribe time, so rotating the private key silently breaks
 every subscription already issued — every device then has to enable notifications again.

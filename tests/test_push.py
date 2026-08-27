@@ -5,6 +5,8 @@ must not pretend push works, a device that re-enables must not end up notified t
 subscription the push service has retired must be dropped rather than retried forever.
 """
 
+import base64
+
 import httpx
 import pytest
 import respx
@@ -64,6 +66,42 @@ async def subscribe(client) -> httpx.Response:
     return await client.post(
         "/api/push", json={"endpoint": ENDPOINT, "p256dh": P256DH, "auth": AUTH}
     )
+
+
+def test_the_private_key_is_accepted_in_every_shape_it_might_arrive_in():
+    """The value has to cross a Portainer panel, a .env file and a shell to get here.
+
+    A multi-line PEM is the shape that arrives truncated -- which is exactly how the
+    Podcast Index secret broke once already -- so base64 is what the generator prints and
+    all three forms are read.
+    """
+    from podarium.push import _private_pem
+    from podarium.vapid import Vapid02
+
+    vapid = Vapid02()
+    vapid.generate_keys()
+    pem = vapid.private_pem().strip()
+
+    assert _private_pem(pem.decode()) == pem
+    # As a .env file or JSON blob carries it.
+    assert _private_pem(pem.decode().replace("\n", "\\n")) == pem
+    # As `python -m podarium.vapid` prints it, quoted the way a panel might.
+    encoded = base64.b64encode(pem).decode()
+    assert _private_pem(encoded) == pem
+    assert _private_pem(f'"{encoded}"') == pem
+    assert _private_pem(f"  {encoded}  ") == pem
+
+
+def test_a_mangled_private_key_says_so_rather_than_failing_later():
+    """A truncated paste must fail at the key, not as an unexplained push failure."""
+    from podarium.push import PushUnavailable, _private_pem
+
+    with pytest.raises(PushUnavailable, match="neither a PEM nor valid base64"):
+        _private_pem("not a key at all !!!")
+
+    # Valid base64 of something that is not a key.
+    with pytest.raises(PushUnavailable, match="not a PEM private key"):
+        _private_pem(base64.b64encode(b"hello there").decode())
 
 
 async def test_without_keys_the_server_says_push_is_off(client, no_keys):

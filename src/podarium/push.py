@@ -15,6 +15,8 @@ server has no keys, nothing is sent, and no other feature notices.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 import logging
 from urllib.parse import urlparse
@@ -49,11 +51,41 @@ def public_key() -> str | None:
     return get_settings().vapid_public_key or None
 
 
+def _private_pem(raw: str) -> bytes:
+    """Accept the private key in whichever shape survived getting here.
+
+    A PEM is multi-line, and the places this value has to travel through -- a Portainer
+    environment panel, a .env file, a shell -- are all happier with one line. So three forms
+    are understood: a real PEM, a PEM with the newlines written as backslash-n, and the
+    whole thing base64-encoded, which is what `python -m podarium.vapid` prints because it
+    is the only form with no newlines and no punctuation to be mangled.
+    """
+    value = raw.strip().strip('"').strip("'")
+
+    if "BEGIN" in value:
+        # Literal backslash-n, as an env file or a JSON blob would carry it.
+        return value.replace("\\n", "\n").encode()
+
+    try:
+        decoded = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise PushUnavailable(
+            "VAPID_PRIVATE_KEY is neither a PEM nor valid base64. Regenerate it with "
+            "`python -m podarium.vapid`."
+        ) from exc
+
+    if b"BEGIN" not in decoded:
+        raise PushUnavailable(
+            "VAPID_PRIVATE_KEY decoded to something that is not a PEM private key."
+        )
+    return decoded
+
+
 def _vapid() -> Vapid02:
     settings = get_settings()
     if not settings.vapid_private_key:
         raise PushUnavailable("VAPID_PRIVATE_KEY is not set")
-    return Vapid02.from_pem(settings.vapid_private_key.encode())
+    return Vapid02.from_pem(_private_pem(settings.vapid_private_key))
 
 
 def _claim_for(endpoint: str) -> dict[str, str]:

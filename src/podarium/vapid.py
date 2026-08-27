@@ -30,13 +30,20 @@ def main() -> None:
     vapid = Vapid02()
     vapid.generate_keys()
 
-    private_pem = vapid.private_pem().decode().strip()
-    public = public_key_b64(vapid)
+    private_pem = vapid.private_pem().strip()
+    # Printed base64-encoded rather than as a PEM. Both are accepted, but this value has to
+    # survive a Portainer environment panel, and a multi-line PEM full of newlines and
+    # slashes is exactly the kind of thing that arrives truncated.
+    private = base64.b64encode(private_pem).decode()
 
-    print("VAPID_PUBLIC_KEY=" + public)
+    print("Paste these three into the environment. Push stays off until they are set.")
     print()
-    print("VAPID_PRIVATE_KEY (keep the newlines; quote it in an env file):")
-    print(private_pem)
+    print("VAPID_PUBLIC_KEY=" + public_key_b64(vapid))
+    print("VAPID_PRIVATE_KEY=" + private)
+    print("VAPID_CONTACT=mailto:you@example.com")
+    print()
+    print("Keep the private key. Browsers pin the public one when a device subscribes, so")
+    print("replacing this pair means every device has to turn notifications on again.")
 
 
 if __name__ == "__main__":
