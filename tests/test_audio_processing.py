@@ -74,3 +74,81 @@ class TestProcessedFile:
         a second. That output is valid audio, just the wrong audio, so only size catches it.
         A legitimate trim plus re-encode lands far above this."""
         assert 0 < MIN_PLAUSIBLE_RATIO < 0.5
+
+
+class TestReconciliation:
+    """Processing at download time alone fails in both directions.
+
+    Turning trimming on left everything already on disk untouched, so the setting appeared
+    to do nothing until the next download. Turning it off left the trimmed copies in place
+    *and still being served*, since the stream endpoint prefers them -- so you would go on
+    hearing processed audio after switching it off.
+    """
+
+    @pytest.fixture
+    async def library(self, session, tmp_media_root):
+        from podarium.models import Episode, Feed
+
+        feed = Feed(feed_url="https://example.com/f.xml", title="Show")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+
+        audio = tmp_media_root / "downloads" / str(feed.id)
+        audio.mkdir(parents=True, exist_ok=True)
+        path = audio / "1.mp3"
+        path.write_bytes(b"not really audio")
+
+        episode = Episode(
+            feed_id=feed.id, guid="ep-1", title="One", local_path=str(path), local_bytes=16
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+        return feed, episode, path
+
+    async def test_a_processed_copy_is_removed_when_the_setting_goes_off(
+        self, session, library
+    ):
+        from podarium.jobs.audio import reconcile_processing
+
+        feed, episode, path = library
+        processed = path.with_suffix(".processed.mp3")
+        processed.write_bytes(b"trimmed")
+        episode.processed_path = str(processed)
+        episode.processed_bytes = 7
+        feed.trim_silence = False
+        await session.commit()
+
+        await reconcile_processing(session)
+        await session.refresh(episode)
+
+        assert episode.processed_path is None
+        assert not processed.exists(), "still on disk, and the stream endpoint prefers it"
+
+    async def test_nothing_is_removed_while_the_setting_is_on(self, session, library):
+        from podarium.jobs.audio import reconcile_processing
+
+        feed, episode, path = library
+        processed = path.with_suffix(".processed.mp3")
+        processed.write_bytes(b"trimmed")
+        episode.processed_path = str(processed)
+        feed.trim_silence = True
+        await session.commit()
+
+        await reconcile_processing(session)
+        await session.refresh(episode)
+
+        assert episode.processed_path == str(processed)
+        assert processed.exists()
+
+    async def test_an_episode_with_no_file_is_left_alone(self, session, library):
+        """Purged episodes keep their row; there is nothing on disk to reconcile."""
+        from podarium.jobs.audio import reconcile_processing
+
+        feed, episode, _ = library
+        episode.local_path = None
+        feed.trim_silence = True
+        await session.commit()
+
+        assert await reconcile_processing(session) == 0

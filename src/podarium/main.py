@@ -42,6 +42,7 @@ from podarium.clients.podcastindex import (
 )
 from podarium.config import get_settings
 from podarium.db import get_sessionmaker
+from podarium.jobs.audio import processing_loop
 from podarium.jobs.downloader import download_workers
 from podarium.jobs.refresh import refresh_loop
 from podarium.jobs.retention import retention_loop
@@ -104,6 +105,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(
                 retention_loop(stop, settings.retention_sweep_minutes * 60), name="retention"
             ),
+            asyncio.create_task(processing_loop(stop), name="audio-processing"),
         ]
         log.info("background jobs started")
 

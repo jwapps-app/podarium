@@ -444,10 +444,11 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
             </div>
 
             <div className="field-hint" style={{ marginTop: 10 }}>
-              Processing runs after each download and takes a few minutes for a long
-              episode. The original is always kept, so turning these off restores it without
-              re-downloading. Episodes already on disk are processed the next time they are
-              fetched.
+              Processing takes a few minutes for a long episode and runs at low priority, so
+              a backlog works through in the background rather than slowing anything down.
+              Turning a setting on picks up episodes already downloaded; turning it off
+              deletes the processed copies and goes back to the originals, which are always
+              kept.
             </div>
           </>
         ) : (

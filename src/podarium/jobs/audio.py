@@ -17,9 +17,12 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from podarium.db import get_sessionmaker
 from podarium.models import AppSettings, Episode, Feed
+from podarium.services import get_app_settings
 
 log = logging.getLogger("podarium")
 
@@ -122,6 +125,12 @@ async def process_episode(
     partial = target.with_suffix(target.suffix + ".part")
 
     command = [
+        # Niced, because a backlog of long episodes is hours of CPU and this shares a host
+        # with the API, Postgres, and whatever else the machine is doing. Slower processing
+        # is invisible; a sluggish player is not.
+        "nice",
+        "-n",
+        "10",
         "ffmpeg",
         "-nostdin",
         "-loglevel", "error",
@@ -194,6 +203,82 @@ async def process_episode(
         partial.unlink(missing_ok=True)
         log.warning("could not process episode %s: %s", episode.id, exc)
         return False
+
+
+async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
+    """Bring existing downloads in line with the current settings. Returns work done.
+
+    Processing at download time alone is not enough, and it fails in both directions.
+    Turning trimming on left every episode already on disk untouched, so the setting
+    appeared to do nothing until the next download -- possibly days. And turning it off
+    left the trimmed copies in place *and still being served*, because the stream endpoint
+    prefers them, so you would go on hearing processed audio after switching it off.
+
+    So the state is reconciled rather than assumed: anything that should have a processed
+    copy and does not gets one, and anything that has one and should not loses it.
+
+    Bounded per pass. A backlog of long episodes is hours of encoding, and it should trickle
+    rather than seize the machine.
+    """
+    app_settings = await get_app_settings(session)
+
+    rows = (
+        await session.execute(
+            select(Episode, Feed)
+            .join(Feed, Feed.id == Episode.feed_id)
+            .where(Episode.local_path.is_not(None))
+        )
+    ).all()
+
+    # The cheap direction first, and without a cap: deleting a file nobody should be served
+    # is instant, and leaving even one behind means hearing audio the setting says you
+    # turned off.
+    reclaimed = 0
+    pending: list[tuple[Episode, Feed]] = []
+    for episode, feed in rows:
+        trim, normalize = wanted(feed, app_settings)
+        if trim or normalize:
+            if not episode.processed_path:
+                pending.append((episode, feed))
+        elif episode.processed_path:
+            drop_processed(episode)
+            reclaimed += 1
+
+    if reclaimed:
+        await session.commit()
+        log.info("removed %s processed copies no longer wanted", reclaimed)
+
+    done = 0
+    for episode, feed in pending[:limit]:
+        if await process_episode(session, episode, feed, app_settings):
+            done += 1
+
+    return done + reclaimed
+
+
+async def processing_loop(stop: asyncio.Event, idle_seconds: int = 300) -> None:
+    """Keep processed audio in step with the settings.
+
+    Polls quickly while there is work and slowly when there is none, so turning a setting
+    on is acted upon within minutes rather than at the next download.
+    """
+    if not ffmpeg_available():
+        log.info("ffmpeg not installed; audio processing disabled")
+        return
+
+    sessionmaker = get_sessionmaker()
+    while not stop.is_set():
+        worked = 0
+        try:
+            async with sessionmaker() as session:
+                worked = await reconcile_processing(session)
+        except Exception:  # noqa: BLE001 - a bad episode must not kill the loop
+            log.exception("audio processing pass failed")
+
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=5 if worked else idle_seconds)
+        except TimeoutError:
+            pass
 
 
 def drop_processed(episode: Episode) -> None:
