@@ -11,8 +11,28 @@
  * bounded budget and reclaims it without warning.
  */
 
-const SHELL = "podarium-shell-v1";
+const SHELL = "podarium-shell-v2";
 const AUDIO = "podarium-audio-v1";
+
+/** Episode ids held in the audio cache, kept in memory.
+ *
+ *  The fetch handler has to decide whether to intercept before it is allowed to await
+ *  anything, so it cannot ask the cache. Refreshed whenever the cache changes, and once on
+ *  activation. Being briefly empty is harmless: a saved episode simply plays from the
+ *  network for a moment, which is what would have happened anyway.
+ */
+const savedIds = new Set();
+
+function episodeIdFrom(pathname) {
+  return Number(pathname.split("/").pop());
+}
+
+async function refreshSavedIds() {
+  const ids = await savedEpisodeIds();
+  savedIds.clear();
+  ids.forEach((id) => savedIds.add(id));
+  return ids;
+}
 
 self.addEventListener("install", () => self.skipWaiting());
 
@@ -26,6 +46,7 @@ self.addEventListener("activate", (event) => {
           .filter((name) => name.startsWith("podarium-") && name !== SHELL && name !== AUDIO)
           .map((name) => caches.delete(name)),
       );
+      await refreshSavedIds();
       await self.clients.claim();
     })(),
   );
@@ -39,11 +60,13 @@ async function saveEpisode(id) {
   const response = await fetch(url, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`stream returned ${response.status}`);
   await cache.put(url, response.clone());
+  savedIds.add(Number(id));
   return true;
 }
 
 async function forgetEpisode(id) {
   const cache = await caches.open(AUDIO);
+  savedIds.delete(Number(id));
   return cache.delete(`/api/stream/${id}`);
 }
 
@@ -68,7 +91,7 @@ self.addEventListener("message", (event) => {
   } else if (type === "forget-episode") {
     event.waitUntil(forgetEpisode(id).then(() => reply({ type: "forgotten", id })));
   } else if (type === "list-saved") {
-    event.waitUntil(savedEpisodeIds().then((ids) => reply({ type: "saved-list", ids })));
+    event.waitUntil(refreshSavedIds().then((ids) => reply({ type: "saved-list", ids })));
   }
 });
 
@@ -126,14 +149,24 @@ self.addEventListener("fetch", (event) => {
   // Saved audio, served from the cache whether or not there is a network. The point of
   // saving an episode is that it does not depend on reaching the server.
   if (url.pathname.startsWith("/api/stream/")) {
+    // Only touched for episodes actually saved here. Everything else is left to the
+    // browser's own networking, deliberately.
+    //
+    // Passing media through a service worker breaks seeking on iOS: a range request that
+    // goes out through fetch() and comes back through respondWith stops playback, and
+    // dragging past what has loaded is exactly what issues one. Desktop browsers handle
+    // the same path without complaint, which is what made this hard to see.
+    //
+    // The decision has to be synchronous -- respondWith cannot be called after an await --
+    // so it reads a set held in memory rather than asking the cache.
+    if (!savedIds.has(episodeIdFrom(url.pathname))) return;
+
     event.respondWith(
       (async () => {
         const cached = await caches.match(url.pathname, { cacheName: AUDIO });
-        if (cached) {
-          const range = request.headers.get("Range");
-          return range ? rangeFromCache(cached, range) : cached;
-        }
-        return fetch(request);
+        if (!cached) return fetch(request);
+        const range = request.headers.get("Range");
+        return range ? rangeFromCache(cached, range) : cached;
       })(),
     );
     return;
