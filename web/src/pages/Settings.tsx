@@ -107,6 +107,14 @@ function StoragePanel() {
             </span>
           </div>
 
+          {data.processed_bytes > 0 ? (
+            <div className="field-hint" style={{ marginTop: 10 }}>
+              {formatBytes(data.processed_bytes)} of this is trimmed or levelled copies kept
+              beside their originals, so the originals survive turning the setting off.
+              Switching trimming off for a show hands that share straight back.
+            </div>
+          ) : null}
+
           {protected_bytes > 0 ? (
             <div className="field-hint" style={{ marginTop: 10 }}>
               Starred and queued episodes are exempt from retention and from the ceiling. A

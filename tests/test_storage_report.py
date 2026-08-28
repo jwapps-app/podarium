@@ -77,6 +77,22 @@ async def test_starred_and_queued_are_reported_as_protected(client, library):
     assert body["protected_bytes"] + body["reclaimable_bytes"] == body["total_bytes"]
 
 
+async def test_trimmed_copies_count_toward_the_total(client, session, library):
+    """Trimming keeps the original beside the processed file. Counting only the original
+    would report about 60% of what is on the disk -- and a panel that exists to answer
+    "how much am I using" is worse than useless if the answer is wrong."""
+    plain = library["plain"]
+    plain.processed_path = "/downloads/1/plain.processed.mp3"
+    plain.processed_bytes = 60
+    await session.commit()
+
+    body = (await client.get("/api/storage")).json()
+
+    assert body["total_bytes"] == 760, "the processed copy is on the disk too"
+    assert body["processed_bytes"] == 60
+    assert body["protected_bytes"] + body["reclaimable_bytes"] == body["total_bytes"]
+
+
 async def test_breakdown_is_per_feed_largest_first(client, library):
     """Sorted by size because the point is finding what to trim."""
     body = (await client.get("/api/storage")).json()

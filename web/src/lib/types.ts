@@ -219,6 +219,8 @@ export interface Storage {
   protected_episodes: number;
   /** What retention could take back if it had to. */
   reclaimable_bytes: number;
+  /** The share that is trimmed or levelled copies kept beside their originals. */
+  processed_bytes: number;
   ceiling_bytes: number | null;
   feeds: FeedUsage[];
 }

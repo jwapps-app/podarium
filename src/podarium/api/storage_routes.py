@@ -46,6 +46,10 @@ class StorageOut(BaseModel):
     # What retention could take back if it had to.
     reclaimable_bytes: int
 
+    # The share that is trimmed or levelled copies kept beside their originals. Reported
+    # separately because it is the one part of the total a setting can hand straight back.
+    processed_bytes: int
+
     ceiling_bytes: int | None
     feeds: list[FeedUsage]
 
@@ -61,18 +65,29 @@ async def storage(
 
     rows = (
         await session.execute(
-            select(Episode.id, Episode.feed_id, Episode.local_bytes, Feed.title)
+            select(
+                Episode.id,
+                Episode.feed_id,
+                Episode.local_bytes,
+                Episode.processed_bytes,
+                Feed.title,
+            )
             .join(Feed, Feed.id == Episode.feed_id)
             .where(Episode.local_path.is_not(None))
         )
     ).all()
 
     per_feed: dict[int, FeedUsage] = {}
-    total = protected_bytes = protected_count = 0
+    total = protected_bytes = protected_count = processed_total = 0
 
-    for episode_id, feed_id, local_bytes, title in rows:
-        size = local_bytes or 0
+    for episode_id, feed_id, local_bytes, processed_bytes, title in rows:
+        # Both copies. Trimming keeps the original alongside the processed file, so
+        # counting only the original would report about 60% of what is actually on the
+        # disk -- and this panel exists to answer "how much am I using", which has to mean
+        # the real number or it is worse than not having it.
+        size = (local_bytes or 0) + (processed_bytes or 0)
         total += size
+        processed_total += processed_bytes or 0
         if episode_id in protected:
             protected_bytes += size
             protected_count += 1
@@ -88,6 +103,7 @@ async def storage(
         protected_bytes=protected_bytes,
         protected_episodes=protected_count,
         reclaimable_bytes=total - protected_bytes,
+        processed_bytes=processed_total,
         ceiling_bytes=app_settings.download_dir_max_bytes,
         feeds=sorted(per_feed.values(), key=lambda f: f.bytes, reverse=True),
     )
