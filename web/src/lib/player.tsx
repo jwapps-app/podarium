@@ -89,6 +89,9 @@ interface PlayerValue {
   sleepAtEnd: boolean;
   /** Minutes, or "episode" to stop at the end of what is playing, or null to cancel. */
   setSleepTimer: (minutes: number | "episode" | null) => void;
+  /** The audio element itself, for the ?debug=media panel. Nothing else should drive it:
+   *  every transport action belongs on this context so there is one place that decides. */
+  element: HTMLAudioElement | null;
 }
 
 const PlayerContext = createContext<PlayerValue | null>(null);
@@ -820,6 +823,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       sleepMinutes,
       sleepAtEnd,
       setSleepTimer,
+      // Stable for the life of the provider: the element is created once, before first
+      // render, so it needs no place in the dependency list below.
+      element: audioRef.current,
     }),
     [
       episode, playing, buffering, error, playbackRate, expanded,
