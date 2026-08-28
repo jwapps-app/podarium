@@ -130,3 +130,71 @@ async def test_the_two_counts_are_reported_separately_per_show(client, episodes)
     assert show["episodes_listened"] == 1
     assert show["episodes_marked_played"] == 2
     assert show["seconds_listened"] == 1800
+
+
+class TestTrimmingSavings:
+    """What trimming saved, attributed to listening rather than to files.
+
+    Silence removed from an episode sitting on disk has saved nobody anything. What was
+    saved is the silence you would have sat through in the part you actually heard.
+    """
+
+    @pytest.fixture
+    async def trimmed(self, session):
+        feed = Feed(feed_url="https://example.com/t.xml", title="Trimmed")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+        # An hour of audio that trimmed down to fifty minutes: ten minutes of silence gone.
+        episode = Episode(
+            feed_id=feed.id,
+            guid="t-1",
+            title="Long one",
+            duration_seconds=3600,
+            source_duration_seconds=3600.0,
+            processed_duration_seconds=3000.0,
+            processed_path="/downloads/1/1.processed.mp3",
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+        return episode
+
+    async def test_listening_to_all_of_it_credits_all_the_silence(self, client, trimmed):
+        await client.put(
+            f"/api/episodes/{trimmed.id}/state", json={"listened_delta": 3000}
+        )
+
+        assert (await stats(client))["seconds_saved_by_trimming"] == 600
+
+    async def test_listening_to_half_credits_half(self, client, trimmed):
+        await client.put(
+            f"/api/episodes/{trimmed.id}/state", json={"listened_delta": 1500}
+        )
+
+        assert (await stats(client))["seconds_saved_by_trimming"] == 300
+
+    async def test_a_trimmed_file_nobody_played_saved_nothing(self, client, trimmed):
+        """The silence is gone from the disk, but no one sat through it either way."""
+        assert (await stats(client))["seconds_saved_by_trimming"] == 0
+
+    async def test_replaying_cannot_credit_more_than_the_episode_held(
+        self, client, trimmed
+    ):
+        """listened_seconds accumulates across replays; the silence was only removed once."""
+        for _ in range(3):
+            await client.put(
+                f"/api/episodes/{trimmed.id}/state", json={"listened_delta": 3000}
+            )
+
+        assert (await stats(client))["seconds_saved_by_trimming"] == 600
+
+    async def test_an_untrimmed_episode_contributes_nothing(self, client, episodes):
+        await client.put(
+            f"/api/episodes/{episodes[0].id}/state", json={"listened_delta": 1800}
+        )
+
+        body = await stats(client)
+
+        assert body["seconds_listened"] == 1800
+        assert body["seconds_saved_by_trimming"] == 0

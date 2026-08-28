@@ -833,6 +833,10 @@ function ListeningPanel() {
           <div className="stat-label">saved by speed</div>
         </div>
         <div className="stat">
+          <div className="stat-value">{hours(data.seconds_saved_by_trimming)}</div>
+          <div className="stat-label">saved by trimming</div>
+        </div>
+        <div className="stat">
           <div className="stat-value">{data.in_progress}</div>
           <div className="stat-label">in progress</div>
         </div>
@@ -873,7 +877,9 @@ function ListeningPanel() {
         &ldquo;Listened&rdquo; counts episodes you spent more than a minute on; &ldquo;cleared&rdquo;
         counts everything marked played, however it got that way. Seeking and skipping are
         not counted as listening. Time saved by speed uses each show&rsquo;s current setting,
-        so changing it re-scores that show&rsquo;s history.
+        so changing it re-scores that show&rsquo;s history. Time saved by trimming counts only
+        the silence in the parts you actually heard — silence removed from an episode still
+        sitting on disk has saved nobody anything.
       </div>
 
       <div className="field-hint" style={{ marginTop: 8 }}>

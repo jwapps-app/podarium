@@ -181,6 +181,7 @@ export interface Stats {
   episodes_listened: number;
   seconds_listened: number;
   seconds_saved_by_speed: number;
+  seconds_saved_by_trimming: number;
   episodes_processed: number;
   in_progress: number;
   bookmarks: number;

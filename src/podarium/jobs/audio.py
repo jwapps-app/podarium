@@ -50,6 +50,31 @@ PROCESS_TIMEOUT_SECONDS = 30 * 60
 MIN_PLAUSIBLE_RATIO = 0.2
 
 
+async def measure_duration(path: Path) -> float | None:
+    """Seconds of audio in a file, from ffprobe.
+
+    Measured rather than taken from the feed: the publisher's duration is frequently wrong
+    and sometimes missing, and the whole point of storing this is to subtract one duration
+    from another. An approximation on either side turns the answer into fiction.
+    """
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
+        if process.returncode != 0:
+            return None
+        return float(stdout.decode().strip())
+    except (TimeoutError, ValueError, OSError):
+        return None
+
+
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
@@ -186,6 +211,11 @@ async def process_episode(
         episode.processed_path = str(target)
         episode.processed_bytes = size
         episode.processed_at = datetime.now(UTC)
+        # Both sides, so the time trimming actually saved is a subtraction rather than an
+        # estimate. Failure to measure is not failure to process -- the file is good, the
+        # saving simply goes unreported for that episode.
+        episode.source_duration_seconds = await measure_duration(source)
+        episode.processed_duration_seconds = await measure_duration(target)
         await session.commit()
 
         elapsed = (datetime.now(UTC) - started).total_seconds()
@@ -288,3 +318,4 @@ def drop_processed(episode: Episode) -> None:
     episode.processed_path = None
     episode.processed_bytes = None
     episode.processed_at = None
+    episode.processed_duration_seconds = None

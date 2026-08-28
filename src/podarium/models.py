@@ -222,6 +222,12 @@ class Episode(Base):
     # back off, which would otherwise mean re-downloading everything.
     processed_path: Mapped[str | None] = mapped_column(Text)
     processed_bytes: Mapped[int | None] = mapped_column(BigInteger)
+
+    # Both measured from the files, not taken from the feed. duration_seconds above is what
+    # the publisher claims, which is frequently wrong and sometimes absent; subtracting one
+    # of these from the other has to be exact or the saving it reports is fiction.
+    source_duration_seconds: Mapped[float | None] = mapped_column(Float)
+    processed_duration_seconds: Mapped[float | None] = mapped_column(Float)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # What the original audio was, so a publisher quietly re-cutting it is detectable.
     audio_sha256: Mapped[str | None] = mapped_column(String(64))

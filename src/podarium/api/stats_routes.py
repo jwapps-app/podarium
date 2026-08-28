@@ -50,6 +50,8 @@ class StatsOut(BaseModel):
     seconds_listened: int
     # What playing above 1x has saved, at the rate that currently applies to each show.
     seconds_saved_by_speed: int
+    # What trimming saved, counted only against episodes actually listened to.
+    seconds_saved_by_trimming: int
     # Dead air removed by processing, where a processed copy exists.
     episodes_processed: int
     in_progress: int
@@ -124,6 +126,39 @@ async def stats(
         )
     ).scalar_one()
 
+    # Trimming's saving, attributed to listening rather than to files.
+    #
+    # Silence removed from an episode sitting on disk has saved nobody anything. What was
+    # saved is the silence you would have sat through in the part you actually heard -- so
+    # each episode contributes in proportion to how much of it was played. Listening is
+    # measured against the trimmed file, which is what gets served, so the ratio between the
+    # two durations converts it back into time that would have been spent.
+    trimmed_rows = (
+        await session.execute(
+            select(
+                EpisodeState.listened_seconds,
+                Episode.source_duration_seconds,
+                Episode.processed_duration_seconds,
+            )
+            .join(Episode, Episode.id == EpisodeState.episode_id)
+            .where(EpisodeState.user_id == user.id)
+            .where(EpisodeState.listened_seconds > 0)
+            .where(Episode.processed_duration_seconds.is_not(None))
+            .where(Episode.source_duration_seconds.is_not(None))
+        )
+    ).all()
+
+    saved_by_trimming = 0.0
+    for listened, source_duration, processed_duration in trimmed_rows:
+        if not processed_duration or processed_duration <= 0:
+            continue
+        removed = float(source_duration) - float(processed_duration)
+        if removed <= 0:
+            continue
+        # Never credit more than the episode contained, however much was replayed.
+        share = min(float(listened) / float(processed_duration), 1.0)
+        saved_by_trimming += removed * share
+
     # The same definition the inbox's "In progress" filter uses, thresholds and all.
     # Counting it differently here would put two numbers for one idea in front of the same
     # person, which is how a statistic stops being believed.
@@ -156,6 +191,7 @@ async def stats(
         episodes_listened=total_listened,
         seconds_listened=total_seconds,
         seconds_saved_by_speed=int(saved),
+        seconds_saved_by_trimming=int(saved_by_trimming),
         episodes_processed=int(processed),
         in_progress=int(in_progress),
         bookmarks=int(bookmarks),
