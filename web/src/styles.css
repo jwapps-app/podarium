@@ -671,7 +671,16 @@ button.episode-title {
 .player-time.right { text-align: right; }
 
 .scrubber {
+  /* Both, because this control lives in two different kinds of parent.
+   *
+   * The player bar is a flex row, where flex:1 is what stretches it. The now-playing
+   * panel stacks the bar above its timestamps and is not a flex container, so flex:1
+   * there means nothing at all -- and a range input with no width falls back to an
+   * intrinsic default of about 130px. On a phone that is a third of the screen: a
+   * stub you can drag to the end of in half a swipe, which is the whole episode. */
   flex: 1;
+  width: 100%;
+  min-width: 0;
   height: 16px;
   padding: 0;
   margin: 0;
