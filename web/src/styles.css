@@ -116,6 +116,26 @@ input, select, textarea {
   padding: 8px 10px;
 }
 
+/* Sixteen pixels exactly, on touch.
+ *
+ * Safari on iOS zooms the page when you focus a text field smaller than 16px, and it does
+ * not zoom back out. The layout is then wider than the window, so the page slides sideways
+ * until the keyboard is dismissed. Body text is 15px and every control inherits it, so this
+ * applied to all thirty-odd fields in the app -- the inbox search is just the one you meet
+ * first.
+ *
+ * Raised only where the behaviour exists. A mouse-driven browser keeps the 15px that
+ * matches the text around it, and the alternative fixes are worse: locking the viewport
+ * with `maximum-scale` would take pinch-to-zoom away from everyone to stop Safari
+ * misusing it. */
+@media (pointer: coarse) {
+  input:not([type="range"]):not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 input:focus-visible, select:focus-visible, textarea:focus-visible,
 button:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent);
