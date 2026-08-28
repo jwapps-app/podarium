@@ -52,6 +52,16 @@ const HANDOVER_LEAD_SECONDS = 1;
  *  a duration that is obviously short, not one that is a few seconds out. */
 const DURATION_AGREEMENT = 0.95;
 
+/** How close to the episode's real length `ended` must fire to be believed.
+ *
+ *  Generous, because feed durations are approximate and a trimmed file is legitimately
+ *  shorter than the feed claims. It is looking for an end that arrives in the middle of an
+ *  episode, not one a minute early. */
+const ENDED_AGREEMENT = 0.9;
+
+/** How many times to re-request a stream that ended early before giving up and saying so. */
+const MAX_STREAM_RECOVERIES = 3;
+
 interface PlayerValue {
   episode: Episode | null;
   playing: boolean;
@@ -233,6 +243,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       episodeRef.current = next;
       outroFiredRef.current = false;
+      recoveryRef.current = 0;
       lastTickRef.current = null;
       setEpisode(next);
       setPosition(next.position_seconds);
@@ -343,6 +354,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const feedSkipsRef = useRef(new Map<number, { intro: number; outro: number }>());
   // Reset per episode; see the outro check in the timeupdate handler.
   const outroFiredRef = useRef(false);
+  // Attempts made to recover a stream that ended before the episode did.
+  const recoveryRef = useRef(0);
   // Chapters and whether this show wants ad breaks skipped, for the timeupdate check.
   const skipSponsorsRef = useRef(false);
   const chaptersRef = useRef<Chapter[]>([]);
@@ -583,7 +596,43 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       play(next);
     };
 
-    const onEnded = () => finish();
+    const onEnded = () => {
+      // An episode that ends far short of its real length did not end -- the stream ran
+      // out. iOS does this when a seek goes past what has been fetched: playback stops at
+      // the loaded edge and the element reports `ended`, because as far as it knows that
+      // is all the media there is. Treating that as a finished episode marks it played and
+      // moves the queue on, mid-episode.
+      const claimed = episodeRef.current?.duration_seconds ?? 0;
+      const shortfall = claimed > 0 && audio.currentTime < claimed * ENDED_AGREEMENT;
+
+      if (shortfall && recoveryRef.current < MAX_STREAM_RECOVERIES) {
+        recoveryRef.current += 1;
+        // Ask for the audio again from where we stopped. The element has decided this
+        // resource is finished, so it needs a fresh load rather than another seek.
+        const resumeAt = audio.currentTime;
+        const wasPlaying = !audio.paused;
+        audio.load();
+        const resume = () => {
+          if (Number.isFinite(audio.duration) && resumeAt < audio.duration) {
+            audio.currentTime = resumeAt;
+          }
+          if (wasPlaying) void audio.play().catch(() => undefined);
+        };
+        if (audio.readyState >= 1) resume();
+        else audio.addEventListener("loadedmetadata", resume, { once: true });
+        return;
+      }
+
+      if (shortfall) {
+        // Out of attempts. Stopping where it stopped is honest; advancing would claim an
+        // episode was finished when most of it was never heard.
+        setPlaying(false);
+        setError("Playback stopped early. The episode may still be loading — try again.");
+        return;
+      }
+
+      finish();
+    };
 
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
