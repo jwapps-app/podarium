@@ -883,9 +883,11 @@ function ListeningPanel() {
       </div>
 
       <div className="field-hint" style={{ marginTop: 8 }}>
-        Measurement started when this was added, so anything heard before that is not in
-        these numbers — it was never recorded, and back-filling it from episodes marked
-        played is exactly the guess this replaced.
+        Listening time began being measured when this was added, so anything heard before
+        that is not in these numbers — it was never recorded, and back-filling it from
+        episodes marked played is exactly the guess this replaced. Trimming savings do
+        cover episodes trimmed earlier: those are re-measured in the background, since
+        reading a file&rsquo;s length costs nothing.
       </div>
     </div>
   );

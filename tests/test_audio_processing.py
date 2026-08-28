@@ -152,3 +152,93 @@ class TestReconciliation:
         await session.commit()
 
         assert await reconcile_processing(session) == 0
+
+
+class TestDurationBackfill:
+    """Episodes trimmed before durations were recorded still need measuring.
+
+    Without it they would never contribute to what trimming saved -- and since they are the
+    ones already on disk, that is exactly the audio you have been listening to.
+    """
+
+    @pytest.fixture
+    async def processed_without_durations(self, session, tmp_media_root):
+        from podarium.models import Episode, Feed
+
+        feed = Feed(feed_url="https://example.com/m.xml", title="Show", trim_silence=True)
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+
+        directory = tmp_media_root / "downloads" / str(feed.id)
+        directory.mkdir(parents=True, exist_ok=True)
+        source = directory / "1.mp3"
+        target = directory / "1.processed.mp3"
+        source.write_bytes(b"original")
+        target.write_bytes(b"trimmed")
+
+        episode = Episode(
+            feed_id=feed.id,
+            guid="ep-1",
+            title="One",
+            local_path=str(source),
+            local_bytes=8,
+            processed_path=str(target),
+            processed_bytes=7,
+            # The state an episode processed by the earlier build is left in.
+            source_duration_seconds=None,
+            processed_duration_seconds=None,
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+        return episode
+
+    async def test_it_attempts_to_measure_them(self, session, processed_without_durations, monkeypatch):
+        from podarium.jobs import audio
+
+        seen: list[str] = []
+
+        async def fake_measure(path):
+            seen.append(path.name)
+            return 100.0 if "processed" not in path.name else 90.0
+
+        monkeypatch.setattr(audio, "measure_duration", fake_measure)
+
+        await audio.reconcile_processing(session)
+        await session.refresh(processed_without_durations)
+
+        assert sorted(seen) == ["1.mp3", "1.processed.mp3"], "both sides are needed"
+        assert processed_without_durations.source_duration_seconds == 100.0
+        assert processed_without_durations.processed_duration_seconds == 90.0
+
+    async def test_an_episode_already_measured_is_left_alone(
+        self, session, processed_without_durations, monkeypatch
+    ):
+        from podarium.jobs import audio
+
+        processed_without_durations.source_duration_seconds = 100.0
+        processed_without_durations.processed_duration_seconds = 90.0
+        await session.commit()
+
+        async def fail(path):
+            raise AssertionError("should not re-measure")
+
+        monkeypatch.setattr(audio, "measure_duration", fail)
+
+        await audio.reconcile_processing(session)
+
+    async def test_a_missing_file_is_skipped_rather_than_measured(
+        self, session, processed_without_durations, monkeypatch
+    ):
+        """Retention purges files and keeps rows; there is nothing to probe."""
+        from podarium.jobs import audio
+
+        Path(processed_without_durations.processed_path).unlink()
+
+        async def fail(path):
+            raise AssertionError("should not probe a missing file")
+
+        monkeypatch.setattr(audio, "measure_duration", fail)
+
+        await audio.reconcile_processing(session)

@@ -49,6 +49,10 @@ PROCESS_TIMEOUT_SECONDS = 30 * 60
 # smaller bitrate legitimately shrinks a file a lot, and this only needs to catch disasters.
 MIN_PLAUSIBLE_RATIO = 0.2
 
+# How many already-processed episodes to measure per pass. Far higher than the encoding
+# cap, because this is two header reads rather than an encode.
+MEASURE_BATCH = 25
+
 
 async def measure_duration(path: Path) -> float | None:
     """Seconds of audio in a file, from ffprobe.
@@ -265,11 +269,17 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
     # turned off.
     reclaimed = 0
     pending: list[tuple[Episode, Feed]] = []
+    unmeasured: list[Episode] = []
     for episode, feed in rows:
         trim, normalize = wanted(feed, app_settings)
         if trim or normalize:
             if not episode.processed_path:
                 pending.append((episode, feed))
+            elif (
+                episode.processed_duration_seconds is None
+                or episode.source_duration_seconds is None
+            ):
+                unmeasured.append(episode)
         elif episode.processed_path:
             drop_processed(episode)
             reclaimed += 1
@@ -278,12 +288,30 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
         await session.commit()
         log.info("removed %s processed copies no longer wanted", reclaimed)
 
+    # Episodes trimmed before the durations were recorded, and any measurement that failed
+    # at the time. Backfilled rather than written off: ffprobe reads a header in
+    # milliseconds, so recovering the figure costs nothing next to re-encoding, and without
+    # it those episodes would never contribute to what trimming saved.
+    measured = 0
+    for episode in unmeasured[:MEASURE_BATCH]:
+        source = Path(episode.local_path) if episode.local_path else None
+        target = Path(episode.processed_path) if episode.processed_path else None
+        if not source or not target or not source.exists() or not target.exists():
+            continue
+        episode.source_duration_seconds = await measure_duration(source)
+        episode.processed_duration_seconds = await measure_duration(target)
+        measured += 1
+
+    if measured:
+        await session.commit()
+        log.info("measured durations for %s already-processed episodes", measured)
+
     done = 0
     for episode, feed in pending[:limit]:
         if await process_episode(session, episode, feed, app_settings):
             done += 1
 
-    return done + reclaimed
+    return done + reclaimed + measured
 
 
 async def processing_loop(stop: asyncio.Event, idle_seconds: int = 300) -> None:
