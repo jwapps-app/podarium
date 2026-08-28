@@ -242,3 +242,103 @@ class TestDurationBackfill:
         monkeypatch.setattr(audio, "measure_duration", fail)
 
         await audio.reconcile_processing(session)
+
+
+class TestPositionRescaling:
+    """A saved position has to move when the file it refers to gets shorter.
+
+    An episode is listenable as soon as it downloads, so someone can be part way through
+    when trimming finishes. Left alone, a position recorded against the original points
+    further through the trimmed content -- minutes skipped silently.
+    """
+
+    async def test_a_position_moves_with_the_trim(self, session, user):
+        from podarium.jobs.audio import _rescale_positions
+        from podarium.models import Episode, EpisodeState, Feed
+
+        feed = Feed(feed_url="https://example.com/r.xml", title="Show")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+
+        # An hour that became fifty minutes: everything shifts to 5/6 of where it was.
+        episode = Episode(
+            feed_id=feed.id,
+            guid="r-1",
+            title="One",
+            source_duration_seconds=3600.0,
+            processed_duration_seconds=3000.0,
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+
+        session.add(
+            EpisodeState(user_id=user.id, episode_id=episode.id, position_seconds=1200)
+        )
+        await session.commit()
+
+        await _rescale_positions(session, episode)
+
+        state = await session.get(
+            EpisodeState, {"user_id": user.id, "episode_id": episode.id}
+        )
+        await session.refresh(state)
+        assert state.position_seconds == 1000
+
+    async def test_an_untouched_episode_is_left_alone(self, session, user):
+        """Nothing was removed, so nothing should move."""
+        from podarium.jobs.audio import _rescale_positions
+        from podarium.models import Episode, EpisodeState, Feed
+
+        feed = Feed(feed_url="https://example.com/s.xml", title="Show")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+        episode = Episode(
+            feed_id=feed.id,
+            guid="s-1",
+            title="One",
+            source_duration_seconds=3600.0,
+            processed_duration_seconds=3600.0,
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+        session.add(
+            EpisodeState(user_id=user.id, episode_id=episode.id, position_seconds=1200)
+        )
+        await session.commit()
+
+        await _rescale_positions(session, episode)
+
+        state = await session.get(
+            EpisodeState, {"user_id": user.id, "episode_id": episode.id}
+        )
+        await session.refresh(state)
+        assert state.position_seconds == 1200
+
+    async def test_it_does_nothing_without_both_measurements(self, session, user):
+        from podarium.jobs.audio import _rescale_positions
+        from podarium.models import Episode, EpisodeState, Feed
+
+        feed = Feed(feed_url="https://example.com/t2.xml", title="Show")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+        episode = Episode(feed_id=feed.id, guid="t2-1", title="One")
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+        session.add(
+            EpisodeState(user_id=user.id, episode_id=episode.id, position_seconds=900)
+        )
+        await session.commit()
+
+        await _rescale_positions(session, episode)
+
+        state = await session.get(
+            EpisodeState, {"user_id": user.id, "episode_id": episode.id}
+        )
+        await session.refresh(state)
+        assert state.position_seconds == 900

@@ -21,7 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.db import get_sessionmaker
-from podarium.models import AppSettings, Episode, Feed
+from podarium.models import AppSettings, Episode, EpisodeState, Feed
 from podarium.services import get_app_settings
 
 log = logging.getLogger("podarium")
@@ -220,6 +220,7 @@ async def process_episode(
         # saving simply goes unreported for that episode.
         episode.source_duration_seconds = await measure_duration(source)
         episode.processed_duration_seconds = await measure_duration(target)
+        await _rescale_positions(session, episode)
         await session.commit()
 
         elapsed = (datetime.now(UTC) - started).total_seconds()
@@ -337,6 +338,51 @@ async def processing_loop(stop: asyncio.Event, idle_seconds: int = 300) -> None:
             await asyncio.wait_for(stop.wait(), timeout=5 if worked else idle_seconds)
         except TimeoutError:
             pass
+
+
+async def _rescale_positions(session: AsyncSession, episode: Episode) -> None:
+    """Move saved positions onto the trimmed timeline.
+
+    An episode is listenable as soon as it downloads -- streaming serves the original until
+    a processed copy exists -- so someone can be part way through when trimming finishes.
+    The file then changes underneath them, and a position recorded against the original
+    points somewhere later in the trimmed one: eleven percent shorter means eleven percent
+    further through the content, several minutes skipped without a word.
+
+    Scaled proportionally, which assumes silence is spread evenly and is not exactly true.
+    But the error is a fraction of the removed silence, where doing nothing is the whole of
+    it, and the alternative -- refusing to trim anything already started -- gives up the
+    feature for exactly the episodes being listened to.
+    """
+    source = episode.source_duration_seconds
+    processed = episode.processed_duration_seconds
+    if not source or not processed or source <= 0:
+        return
+
+    ratio = processed / source
+    if ratio >= 1:
+        return
+
+    states = (
+        await session.execute(
+            select(EpisodeState)
+            .where(EpisodeState.episode_id == episode.id)
+            .where(EpisodeState.position_seconds > 0)
+        )
+    ).scalars().all()
+
+    for state in states:
+        moved = int(state.position_seconds * ratio)
+        log.info(
+            "episode %s trimmed: moving saved position %ss -> %ss",
+            episode.id,
+            state.position_seconds,
+            moved,
+        )
+        state.position_seconds = moved
+
+    if states:
+        await session.commit()
 
 
 def drop_processed(episode: Episode) -> None:
