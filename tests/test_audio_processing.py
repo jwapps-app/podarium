@@ -342,3 +342,54 @@ class TestPositionRescaling:
         )
         await session.refresh(state)
         assert state.position_seconds == 900
+
+
+class TestFailureLeavesNoHalfWrittenRow:
+    """A processing attempt that dies part way must not leave its fields behind.
+
+    process_episode assigns processed_path, then the byte count, then the two measured
+    durations, on a live session. Without a rollback an exception between those writes
+    leaves the row dirty, and the next commit anywhere in the loop persists it. The state
+    that does real damage is processed_path with no processed_duration_seconds: the stream
+    endpoint serves the trimmed file while the API, having nothing measured to report,
+    falls back to the feed's much longer figure -- and a player told the wrong length
+    cannot tell a finished episode from a truncated stream.
+    """
+
+    async def test_a_failed_attempt_writes_nothing(self, session, monkeypatch, tmp_path):
+        from podarium.jobs import audio as audio_jobs
+        from podarium.models import AppSettings, Episode, Feed
+
+        source = tmp_path / "1.mp3"
+        source.write_bytes(b"\0" * 4096)
+
+        feed = Feed(feed_url="https://example.com/s.xml", title="Show")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+
+        episode = Episode(
+            feed_id=feed.id, guid="e-1", title="One",
+            local_path=str(source), local_bytes=4096, duration_seconds=9828,
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+
+        monkeypatch.setattr(audio_jobs, "ffmpeg_available", lambda: True)
+
+        async def explode(*args, **kwargs):
+            raise RuntimeError("ffmpeg went away")
+
+        monkeypatch.setattr(audio_jobs.asyncio, "create_subprocess_exec", explode)
+
+        settings = AppSettings(id=1, global_trim_silence=True, global_normalize_audio=False)
+        assert await audio_jobs.process_episode(session, episode, feed, settings) is False
+
+        # Commit whatever the session is now holding, exactly as the loop would.
+        await session.commit()
+        await session.refresh(episode)
+
+        assert episode.processed_path is None
+        assert episode.processed_duration_seconds is None
+        assert episode.duration_seconds == 9828

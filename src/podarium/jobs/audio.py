@@ -236,7 +236,19 @@ async def process_episode(
         return True
     except Exception as exc:  # noqa: BLE001 - the original still plays
         partial.unlink(missing_ok=True)
-        log.warning("could not process episode %s: %s", episode.id, exc)
+        # Discard whatever was assigned before the failure. The fields above are set one
+        # at a time on a live session, so an exception part way through leaves the row
+        # half written -- and the next commit anywhere in this loop would persist it. A
+        # row carrying processed_path with no processed_duration_seconds is the worst of
+        # those states: the stream endpoint then serves a trimmed file while the API
+        # reports the feed's much longer figure, which is exactly the mismatch that made
+        # trimmed episodes look like truncated streams.
+        #
+        # Read before the rollback: it expires every loaded attribute, and reading one
+        # back is database IO, which is not something to attempt from an error path.
+        episode_id = episode.id
+        await session.rollback()
+        log.warning("could not process episode %s: %s", episode_id, exc)
         return False
 
 
