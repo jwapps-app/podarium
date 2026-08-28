@@ -313,6 +313,13 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
             continue
         episode.source_duration_seconds = await measure_duration(source)
         episode.processed_duration_seconds = await measure_duration(target)
+        # Rescale here too, not only where the encoding happens.
+        #
+        # An episode reaching this branch was processed without its durations being
+        # recorded, so the rescale at that point had nothing to divide and did nothing --
+        # and its saved position has been pointing into the untrimmed timeline ever since.
+        # Learning the durations is exactly the moment that becomes fixable.
+        await _rescale_positions(session, episode)
         measured += 1
 
     if measured:
@@ -365,6 +372,12 @@ async def _rescale_positions(session: AsyncSession, episode: Episode) -> None:
     But the error is a fraction of the removed silence, where doing nothing is the whole of
     it, and the alternative -- refusing to trim anything already started -- gives up the
     feature for exactly the episodes being listened to.
+
+    Applies at most once per position, which matters because this runs from two places:
+    when a file is encoded, and again when a file encoded earlier finally gets measured.
+    A row updated at or after the episode was processed has either been rescaled already
+    or been written since by playback, and is on the trimmed timeline either way; shrinking
+    it again would take the same tenth off twice.
     """
     source = episode.source_duration_seconds
     processed = episode.processed_duration_seconds
@@ -375,13 +388,15 @@ async def _rescale_positions(session: AsyncSession, episode: Episode) -> None:
     if ratio >= 1:
         return
 
-    states = (
-        await session.execute(
-            select(EpisodeState)
-            .where(EpisodeState.episode_id == episode.id)
-            .where(EpisodeState.position_seconds > 0)
-        )
-    ).scalars().all()
+    query = (
+        select(EpisodeState)
+        .where(EpisodeState.episode_id == episode.id)
+        .where(EpisodeState.position_seconds > 0)
+    )
+    if episode.processed_at is not None:
+        query = query.where(EpisodeState.updated_at < episode.processed_at)
+
+    states = (await session.execute(query)).scalars().all()
 
     for state in states:
         moved = int(state.position_seconds * ratio)

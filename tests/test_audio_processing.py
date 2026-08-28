@@ -393,3 +393,99 @@ class TestFailureLeavesNoHalfWrittenRow:
         assert episode.processed_path is None
         assert episode.processed_duration_seconds is None
         assert episode.duration_seconds == 9828
+
+
+class TestRescaleAppliesAtMostOnce:
+    """The same tenth must not come off a position twice.
+
+    _rescale_positions runs from two places: when a file is encoded, and again when a file
+    encoded earlier is finally measured. A position already on the trimmed timeline -- moved
+    by an earlier pass, or written since by playback -- has to be left alone, or it walks
+    backwards a tenth at a time.
+    """
+
+    async def setup_episode(self, session, user, *, position: int):
+        from datetime import UTC, datetime, timedelta
+
+        from podarium.models import Episode, EpisodeState, Feed
+
+        feed = Feed(feed_url="https://example.com/s.xml", title="Show")
+        session.add(feed)
+        await session.commit()
+        await session.refresh(feed)
+
+        processed_at = datetime.now(UTC) - timedelta(hours=1)
+        episode = Episode(
+            feed_id=feed.id, guid="e-1", title="One",
+            local_path="/d/1.mp3", processed_path="/d/1.processed.mp3",
+            processed_at=processed_at,
+            source_duration_seconds=3600.0,
+            processed_duration_seconds=3200.0,
+        )
+        session.add(episode)
+        await session.commit()
+        await session.refresh(episode)
+
+        session.add(
+            EpisodeState(user_id=user.id, episode_id=episode.id, position_seconds=position)
+        )
+        await session.commit()
+        return episode, processed_at
+
+    async def read_position(self, session, user, episode):
+        from podarium.models import EpisodeState
+
+        state = await session.get(
+            EpisodeState, {"user_id": user.id, "episode_id": episode.id}
+        )
+        await session.refresh(state)
+        return state.position_seconds
+
+    async def test_a_position_from_before_processing_moves(self, session, user):
+        from sqlalchemy import update
+
+        from podarium.jobs.audio import _rescale_positions
+        from podarium.models import EpisodeState
+
+        episode, processed_at = await self.setup_episode(session, user, position=1800)
+        # Last written by playback before the file was trimmed.
+        await session.execute(
+            update(EpisodeState)
+            .where(EpisodeState.episode_id == episode.id)
+            .values(updated_at=processed_at - __import__("datetime").timedelta(hours=1))
+        )
+        await session.commit()
+
+        await _rescale_positions(session, episode)
+        assert await self.read_position(session, user, episode) == 1600
+
+    async def test_running_it_twice_does_not_shrink_twice(self, session, user):
+        from datetime import timedelta
+
+        from sqlalchemy import update
+
+        from podarium.jobs.audio import _rescale_positions
+        from podarium.models import EpisodeState
+
+        episode, processed_at = await self.setup_episode(session, user, position=1800)
+        await session.execute(
+            update(EpisodeState)
+            .where(EpisodeState.episode_id == episode.id)
+            .values(updated_at=processed_at - timedelta(hours=1))
+        )
+        await session.commit()
+
+        await _rescale_positions(session, episode)
+        await _rescale_positions(session, episode)
+
+        # 1600, not 1422: the second pass must find nothing left to move.
+        assert await self.read_position(session, user, episode) == 1600
+
+    async def test_a_position_written_since_processing_is_left_alone(self, session, user):
+        # Played after trimming finished, so the position is already on the new timeline.
+        episode, _ = await self.setup_episode(session, user, position=1800)
+
+        from podarium.jobs.audio import _rescale_positions
+
+        await _rescale_positions(session, episode)
+        assert await self.read_position(session, user, episode) == 1800
