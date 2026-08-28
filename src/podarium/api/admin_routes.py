@@ -10,6 +10,7 @@ from podarium.config import get_settings
 from podarium.db import get_session
 from podarium.metrics import (
     download_dir_bytes,
+    processed_bytes_gauge,
     download_queue_depth,
     feeds_with_errors,
 )
@@ -54,14 +55,20 @@ async def metrics(request: Request, session: AsyncSession = Depends(get_session)
     ).scalar_one()
     download_queue_depth.set(int(depth))
 
-    on_disk = (
+    # Both copies: trimming keeps the original beside the processed file, so summing only
+    # the original reports about 60% of the real figure -- and a dashboard fed a wrong
+    # number is worse than one fed none.
+    on_disk, processed = (
         await session.execute(
-            select(func.coalesce(func.sum(Episode.local_bytes), 0)).where(
-                Episode.local_path.is_not(None)
-            )
+            select(
+                func.coalesce(func.sum(Episode.local_bytes), 0)
+                + func.coalesce(func.sum(Episode.processed_bytes), 0),
+                func.coalesce(func.sum(Episode.processed_bytes), 0),
+            ).where(Episode.local_path.is_not(None))
         )
-    ).scalar_one()
+    ).one()
     download_dir_bytes.set(int(on_disk or 0))
+    processed_bytes_gauge.set(int(processed or 0))
 
     errored = (
         await session.execute(

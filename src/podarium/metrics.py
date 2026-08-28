@@ -30,6 +30,11 @@ download_dir_bytes = Gauge(
     "podarium_download_dir_bytes", "Bytes currently on disk according to the database"
 )
 
+processed_bytes_gauge = Gauge(
+    "podarium_processed_bytes",
+    "Of the bytes on disk, how many are trimmed or levelled copies kept beside originals",
+)
+
 feeds_with_errors = Gauge(
     "podarium_feeds_with_errors", "Feeds whose last refresh attempt failed"
 )
