@@ -95,6 +95,7 @@ export interface Episode {
   played: boolean;
   position_seconds: number;
   completed_at: string | null;
+  listened_seconds: number;
   last_played_at: string | null;
   starred: boolean;
   updated_at: string;
@@ -170,13 +171,15 @@ export interface Bookmark {
 export interface ShowStats {
   feed_id: number;
   title: string | null;
-  episodes_played: number;
-  seconds_played: number;
+  episodes_marked_played: number;
+  episodes_listened: number;
+  seconds_listened: number;
 }
 
 export interface Stats {
-  episodes_played: number;
-  seconds_played: number;
+  episodes_marked_played: number;
+  episodes_listened: number;
+  seconds_listened: number;
   seconds_saved_by_speed: number;
   episodes_processed: number;
   in_progress: number;

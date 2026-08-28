@@ -801,18 +801,23 @@ function ListeningPanel() {
     <div className="panel">
       <div className="panel-title">Listening</div>
       <p className="panel-hint">
-        Worked out from what is played and where you are in what is not. Nothing extra is
-        recorded to produce it.
+        Time is measured as audio actually plays. Marking an episode played does not count
+        as listening to it — that is how an inbox gets cleared, and it usually means the
+        opposite.
       </p>
 
       <div className="stat-grid">
         <div className="stat">
-          <div className="stat-value">{hours(data.seconds_played)}</div>
+          <div className="stat-value">{hours(data.seconds_listened)}</div>
           <div className="stat-label">time listened</div>
         </div>
         <div className="stat">
-          <div className="stat-value">{data.episodes_played}</div>
-          <div className="stat-label">episodes finished</div>
+          <div className="stat-value">{data.episodes_listened}</div>
+          <div className="stat-label">episodes listened to</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">{data.episodes_marked_played}</div>
+          <div className="stat-label">marked played</div>
         </div>
         <div className="stat">
           <div className="stat-value">{hours(data.seconds_saved_by_speed)}</div>
@@ -837,7 +842,8 @@ function ListeningPanel() {
           <thead>
             <tr>
               <th>Show</th>
-              <th className="storage-num">Finished</th>
+              <th className="storage-num">Listened</th>
+              <th className="storage-num">Cleared</th>
               <th className="storage-num">Time</th>
             </tr>
           </thead>
@@ -845,8 +851,9 @@ function ListeningPanel() {
             {data.shows.map((show) => (
               <tr key={show.feed_id}>
                 <td>{show.title ?? "Untitled"}</td>
-                <td className="storage-num">{show.episodes_played}</td>
-                <td className="storage-num">{hours(show.seconds_played)}</td>
+                <td className="storage-num">{show.episodes_listened}</td>
+                <td className="storage-num">{show.episodes_marked_played}</td>
+                <td className="storage-num">{hours(show.seconds_listened)}</td>
               </tr>
             ))}
           </tbody>
@@ -854,9 +861,16 @@ function ListeningPanel() {
       ) : null}
 
       <div className="field-hint" style={{ marginTop: 12 }}>
-        An episode marked played counts as heard in full, which is true of one you finished
-        and generous about one you marked to clear it. Time saved by speed uses each
-        show&rsquo;s current setting, so changing it re-scores that show&rsquo;s history.
+        &ldquo;Listened&rdquo; counts episodes you spent more than a minute on; &ldquo;cleared&rdquo;
+        counts everything marked played, however it got that way. Seeking and skipping are
+        not counted as listening. Time saved by speed uses each show&rsquo;s current setting,
+        so changing it re-scores that show&rsquo;s history.
+      </div>
+
+      <div className="field-hint" style={{ marginTop: 8 }}>
+        Measurement started when this was added, so anything heard before that is not in
+        these numbers — it was never recorded, and back-filling it from episodes marked
+        played is exactly the guess this replaced.
       </div>
     </div>
   );

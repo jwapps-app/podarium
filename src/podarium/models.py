@@ -246,6 +246,19 @@ class EpisodeState(Base):
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), primary_key=True)
     played: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     position_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # Seconds of audio that actually played, accumulated as it played.
+    #
+    # Deliberately not inferred from `played`. Marking an episode played is how a person
+    # clears an inbox -- it says "I am not going to listen to this", which is close to the
+    # opposite of having listened. Counting it as time listened made the figure describe
+    # tidying rather than listening.
+    #
+    # Nor from position: seeking moves it, and skipping to the end of a three-hour episode
+    # would credit three hours. Only the playhead advancing at playback speed counts.
+    listened_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     starred: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # When playback last advanced, which is what "continue listening" orders by.

@@ -1,18 +1,23 @@
-"""Listening statistics, derived rather than tracked.
+"""Listening statistics.
 
-Everything here is computed from state this server already keeps -- what is played, where
-you are in what you have not finished. Nothing new is recorded, and no event log is kept:
-a self-hosted server has no reason to accumulate a behavioural record, and the interesting
-numbers do not need one.
+Time listened is measured, not inferred. The obvious implementation -- count the duration
+of everything marked played -- describes tidying rather than listening: marking played is
+how an inbox gets cleared, and it means "I am not going to listen to this", which is close
+to the opposite of having listened. A library cleared of things you skipped would report
+hundreds of hours nobody heard.
 
-That does make these estimates, and the docstrings say where. An episode marked played is
-counted as heard in full, which is true of a finished episode and generous about one you
-marked played to clear it.
+So the player counts audio as it actually plays and the total is accumulated per episode.
+Seeking does not count; skipping to the end does not count; marking played does not count.
+
+Two consequences worth stating plainly. There is still no event log -- one integer per
+episode, not a behavioural record. And the counter starts from the update that introduced
+it: listening before that was never measured and cannot be recovered, so the figures begin
+at zero rather than being back-filled from a number known to be wrong.
 """
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import case, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.api.episode_routes import IN_PROGRESS_MIN_ELAPSED, IN_PROGRESS_MIN_REMAINING
@@ -23,17 +28,26 @@ from podarium.services import get_app_settings
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
+# Below this, an episode was sampled rather than listened to -- pressing play to hear what
+# a show sounds like should not count as an episode listened.
+MIN_LISTENED_SECONDS = 60
+
 
 class ShowStats(BaseModel):
     feed_id: int
     title: str | None
-    episodes_played: int
-    seconds_played: int
+    # Marked played, whether or not it was heard -- clearing the inbox counts here.
+    episodes_marked_played: int
+    # Episodes with real listening time against them.
+    episodes_listened: int
+    seconds_listened: int
 
 
 class StatsOut(BaseModel):
-    episodes_played: int
-    seconds_played: int
+    # Kept separate on purpose: one is a count of a flag, the other of listening.
+    episodes_marked_played: int
+    episodes_listened: int
+    seconds_listened: int
     # What playing above 1x has saved, at the rate that currently applies to each show.
     seconds_saved_by_speed: int
     # Dead air removed by processing, where a processed copy exists.
@@ -50,14 +64,12 @@ async def stats(
 ) -> StatsOut:
     app_settings = await get_app_settings(session)
 
-    # Played episodes count their whole duration; unfinished ones count how far in you are.
-    played_seconds = func.sum(
-        case(
-            (EpisodeState.played.is_(True), func.coalesce(Episode.duration_seconds, 0)),
-            else_=func.coalesce(EpisodeState.position_seconds, 0),
-        )
+    listened_seconds = func.sum(func.coalesce(EpisodeState.listened_seconds, 0))
+    marked_count = func.count().filter(EpisodeState.played.is_(True))
+    # "Listened to" needs a floor, or pressing play by accident counts as an episode.
+    listened_count = func.count().filter(
+        EpisodeState.listened_seconds > MIN_LISTENED_SECONDS
     )
-    played_count = func.count().filter(EpisodeState.played.is_(True))
 
     rows = (
         await session.execute(
@@ -65,32 +77,39 @@ async def stats(
                 Feed.id,
                 Feed.title,
                 Feed.playback_rate,
-                played_count,
-                func.coalesce(played_seconds, 0),
+                marked_count,
+                listened_count,
+                func.coalesce(listened_seconds, 0),
             )
             .select_from(EpisodeState)
             .join(Episode, Episode.id == EpisodeState.episode_id)
             .join(Feed, Feed.id == Episode.feed_id)
             .where(EpisodeState.user_id == user.id)
             .group_by(Feed.id, Feed.title, Feed.playback_rate)
-            .order_by(func.coalesce(played_seconds, 0).desc())
+            .order_by(func.coalesce(listened_seconds, 0).desc())
         )
     ).all()
 
     shows: list[ShowStats] = []
     total_seconds = 0
-    total_played = 0
+    total_marked = 0
+    total_listened = 0
     saved = 0.0
 
-    for feed_id, title, feed_rate, count, seconds in rows:
+    for feed_id, title, feed_rate, marked, listened, seconds in rows:
         seconds = int(seconds or 0)
         shows.append(
             ShowStats(
-                feed_id=feed_id, title=title, episodes_played=int(count), seconds_played=seconds
+                feed_id=feed_id,
+                title=title,
+                episodes_marked_played=int(marked),
+                episodes_listened=int(listened),
+                seconds_listened=seconds,
             )
         )
         total_seconds += seconds
-        total_played += int(count)
+        total_marked += int(marked)
+        total_listened += int(listened)
 
         # At 1.5x, an hour of audio takes forty minutes: the saving is the difference. Uses
         # the rate that applies now, since no per-episode rate is recorded -- so changing a
@@ -133,8 +152,9 @@ async def stats(
     ).scalar_one()
 
     return StatsOut(
-        episodes_played=total_played,
-        seconds_played=total_seconds,
+        episodes_marked_played=total_marked,
+        episodes_listened=total_listened,
+        seconds_listened=total_seconds,
         seconds_saved_by_speed=int(saved),
         episodes_processed=int(processed),
         in_progress=int(in_progress),

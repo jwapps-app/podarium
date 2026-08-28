@@ -203,6 +203,8 @@ class EpisodeOut(BaseModel):
     stream_url: str
     played: bool = False
     position_seconds: int = 0
+    # Measured, not inferred: see EpisodeState.listened_seconds.
+    listened_seconds: int = 0
     completed_at: datetime | None = None
     # Exposed so a client can build its own resume list without re-deriving the order.
     last_played_at: datetime | None = None
@@ -233,6 +235,13 @@ class EpisodeListOut(BaseModel):
 class EpisodeStateUpdate(BaseModel):
     played: bool | None = None
     position_seconds: int | None = Field(default=None, ge=0)
+    # Seconds of audio played since the last report, to be added to the running total.
+    # A delta rather than a total because two devices can play the same episode and both
+    # have listened to it -- their contributions add up, where a total would overwrite.
+    #
+    # Bounded: a report covers seconds, not hours, and a wild value would otherwise be
+    # unrecoverable without editing the database.
+    listened_delta: int | None = Field(default=None, ge=0, le=3600)
     starred: bool | None = None
     # When the change was actually made, as opposed to when it arrived.
     #
@@ -410,6 +419,7 @@ def episode_out(episode: Episode, state=None) -> EpisodeOut:
         stream_url=f"/api/stream/{episode.id}",
         played=bool(state.played) if state else False,
         position_seconds=int(state.position_seconds) if state else 0,
+        listened_seconds=int(state.listened_seconds) if state else 0,
         completed_at=state.completed_at if state else None,
         last_played_at=state.last_played_at if state else None,
         starred=bool(state.starred) if state else False,

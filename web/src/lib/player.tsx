@@ -28,6 +28,14 @@ const COMPLETION_TAIL_SECONDS = 5;
  *  and coarser above it where they are not. */
 export const PLAYBACK_RATES = [0.8, 0.9, 1, 1.1, 1.2, 1.25, 1.5, 1.75, 2, 2.5, 3];
 
+/** The most audio one timeupdate tick can plausibly represent.
+ *
+ *  timeupdate fires about four times a second, so a tick covers a quarter-second of audio
+ *  at 1x and about a second at the fastest offered speed. Anything larger is a seek, not
+ *  listening. Generous enough to survive a stalled tab catching up, tight enough that a
+ *  ten-second skip never counts. */
+const MAX_TICK_SECONDS = 5;
+
 interface PlayerValue {
   episode: Episode | null;
   playing: boolean;
@@ -115,6 +123,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // Kept in refs so the reporting effect does not tear down and restart on every tick.
   const episodeRef = useRef<Episode | null>(null);
   const lastReportedRef = useRef(0);
+  // Audio that has actually played since the last report, and the playhead at the previous
+  // tick. See the timeupdate handler for why this is measured rather than derived.
+  const listenedRef = useRef(0);
+  const lastTickRef = useRef<number | null>(null);
   const advanceRef = useRef<(() => Episode | null) | null>(null);
   const rateRef = useRef(1);
 
@@ -148,9 +160,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
       lastReportedRef.current = rounded;
 
+      // Whole seconds, and only what has not been sent. Kept out of the payload entirely
+      // when it is zero so a state write that involves no listening -- marking played,
+      // starring -- cannot be mistaken for any.
+      const listened = Math.floor(listenedRef.current);
+      if (listened > 0) listenedRef.current -= listened;
+
       api
         .setState(current.id, {
           position_seconds: rounded,
+          ...(listened > 0 ? { listened_delta: listened } : {}),
           ...(options.played === undefined ? {} : { played: options.played }),
         })
         .then(() => {
@@ -198,6 +217,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       episodeRef.current = next;
       outroFiredRef.current = false;
+      lastTickRef.current = null;
       setEpisode(next);
       setPosition(next.position_seconds);
       setDuration(next.duration_seconds ?? 0);
@@ -419,12 +439,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
     const onPause = () => {
       setPlaying(false);
+      // Dropped so the gap while paused is not counted when playback resumes.
+      lastTickRef.current = null;
       reportPosition(audio.currentTime, { force: true });
     };
     // Whole seconds only. timeupdate fires around four times a second, and every one
     // was a React state change re-rendering every consumer of the player context; the
     // display is in whole seconds anyway, so the extra ticks bought nothing.
     const onTimeUpdate = () => {
+      // How much audio actually played, measured between ticks.
+      //
+      // Not derived from the played flag, which is how an inbox gets cleared and says the
+      // opposite of having listened. Not derived from position either: skipping to the end
+      // of a three-hour episode would credit three hours. Only the playhead moving forward
+      // by about the amount a tick can cover counts -- a seek, in either direction,
+      // produces a jump far outside that and is ignored, which is exactly right, because
+      // nobody listened to the part that was skipped.
+      const previous = lastTickRef.current;
+      lastTickRef.current = audio.currentTime;
+      if (previous !== null && !audio.paused) {
+        const advanced = audio.currentTime - previous;
+        if (advanced > 0 && advanced <= MAX_TICK_SECONDS) {
+          listenedRef.current += advanced;
+        }
+      }
+
       setPosition((current) =>
         Math.floor(current) === Math.floor(audio.currentTime) ? current : audio.currentTime,
       );

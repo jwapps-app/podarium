@@ -213,7 +213,7 @@ export const api = {
 
   setState: (
     id: number,
-    body: { played?: boolean; position_seconds?: number; starred?: boolean },
+    body: { played?: boolean; position_seconds?: number; starred?: boolean; listened_delta?: number },
   ) =>
     request<Episode>(`/api/episodes/${id}/state`, {
       method: "PUT",

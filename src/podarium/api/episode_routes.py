@@ -327,10 +327,22 @@ async def update_state(
     episode = await _get_episode_or_404(session, episode_id)
     state, existed = await _get_or_create_state(session, user.id, episode_id)
 
+    # Applied before the staleness check, deliberately.
+    #
+    # Every other field here is a claim about the present -- where you are, whether it is
+    # played -- so an old one describes a moment that has been overtaken and is discarded.
+    # This one is not a claim about now: it is a fact about audio that really played, and
+    # it stays true however long it took to arrive from a device that was offline. Added
+    # rather than assigned, so two devices that both played an episode both count.
+    if body.listened_delta:
+        state.listened_seconds = (state.listened_seconds or 0) + body.listened_delta
+
     if existed and _is_stale(body.changed_at, state.updated_at):
         # Older than what is already stored, so it describes a moment that has since been
         # overtaken. Returning the current state rather than an error lets the client
         # correct its own copy from the reply instead of handling a failure path.
+        await session.commit()
+        await session.refresh(state)
         return episode_out(episode, state)
 
     if body.played is not None:
