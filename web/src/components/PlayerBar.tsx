@@ -6,6 +6,7 @@ import { PLAYBACK_RATES, usePlayer, usePlayerProgress } from "../lib/player";
 import { useFeeds, useQueue } from "../lib/queries";
 import type { Episode } from "../lib/types";
 import { Artwork } from "./Artwork";
+import { Scrubber } from "./Scrubber";
 import { Back10Icon, ChevronUpIcon, Forward30Icon, PauseIcon, PlayIcon } from "./Icons";
 
 export function PlayerBar() {
@@ -38,7 +39,6 @@ export function PlayerBar() {
   const episode = player.episode;
   const feed = feeds?.find((candidate) => candidate.id === episode.feed_id);
   const duration = progress.duration || episode.duration_seconds || 0;
-  const percent = duration > 0 ? (progress.position / duration) * 100 : 0;
 
   const cycleRate = () => {
     const index = PLAYBACK_RATES.indexOf(player.playbackRate);
@@ -110,16 +110,10 @@ export function PlayerBar() {
 
         <div className="player-scrub">
           <span className="player-time">{formatClock(progress.position)}</span>
-          <input
-            className="scrubber"
-            type="range"
-            min={0}
-            max={Math.max(duration, 1)}
-            step={1}
-            value={Math.min(progress.position, duration || 1)}
-            style={{ ["--progress" as string]: `${percent}%` }}
-            onChange={(event) => player.seek(Number(event.target.value))}
-            aria-label="Seek"
+          <Scrubber
+            position={progress.position}
+            duration={duration}
+            onSeek={player.seek}
           />
           <span className="player-time right">{formatClock(Math.max(duration - progress.position, 0))}</span>
         </div>

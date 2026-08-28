@@ -10,6 +10,7 @@ import { useEpisodeActions, useFeeds, useQueue } from "../lib/queries";
 import { sanitizeHtml } from "../lib/sanitize";
 import { podlinkEpisodeUrl } from "../lib/share";
 import { Artwork } from "./Artwork";
+import { Scrubber } from "./Scrubber";
 import { ShareButton } from "./ShareButton";
 import {
   Back10Icon,
@@ -81,7 +82,6 @@ export function NowPlaying() {
 
   const feed = feeds?.find((candidate) => candidate.id === episode.feed_id);
   const duration = progress.duration || episode.duration_seconds || 0;
-  const percent = duration > 0 ? (progress.position / duration) * 100 : 0;
   const queued = new Set((queue ?? []).map((item) => item.episode_id)).has(episode.id);
   const shareUrl = podlinkEpisodeUrl(feed?.feed_url, episode.guid);
 
@@ -137,16 +137,10 @@ export function NowPlaying() {
           </div>
 
           <div className="np-scrub">
-            <input
-              className="scrubber"
-              type="range"
-              min={0}
-              max={Math.max(duration, 1)}
-              step={1}
-              value={Math.min(progress.position, duration || 1)}
-              style={{ ["--progress" as string]: `${percent}%` }}
-              onChange={(event) => player.seek(Number(event.target.value))}
-              aria-label="Seek"
+            <Scrubber
+              position={progress.position}
+              duration={duration}
+              onSeek={player.seek}
             />
             <div className="np-times">
               <span>{formatClock(progress.position)}</span>
