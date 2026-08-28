@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.auth import current_user
 from podarium.db import get_session
+from podarium.jobs.audio import ffmpeg_available
 from podarium.jobs.refresh import apply_auto_download_window
 from podarium.models import Feed, User
 from podarium.schemas import SettingsOut, SettingsUpdate
@@ -21,6 +22,10 @@ def _out(row) -> SettingsOut:
         user_agent=row.user_agent,
         default_playback_rate=row.default_playback_rate,
         global_auto_download_count=row.global_auto_download_count,
+        global_trim_silence=row.global_trim_silence,
+        global_normalize_audio=row.global_normalize_audio,
+        global_skip_sponsor_chapters=row.global_skip_sponsor_chapters,
+        audio_processing_available=ffmpeg_available(),
     )
 
 
@@ -51,6 +56,12 @@ async def update_settings(
         row.user_agent = body.user_agent
     if body.default_playback_rate is not None:
         row.default_playback_rate = body.default_playback_rate
+    if body.global_trim_silence is not None:
+        row.global_trim_silence = body.global_trim_silence
+    if body.global_normalize_audio is not None:
+        row.global_normalize_audio = body.global_normalize_audio
+    if body.global_skip_sponsor_chapters is not None:
+        row.global_skip_sponsor_chapters = body.global_skip_sponsor_chapters
 
     # As with per-feed retention, NULL here is meaningful: it means "no ceiling".
     if body.clear_download_dir_max_bytes:

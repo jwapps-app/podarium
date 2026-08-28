@@ -48,6 +48,14 @@ export interface Feed {
   /** null inherits the global default; effective_playback_rate is what plays. */
   playback_rate: number | null;
   effective_playback_rate: number;
+  trim_silence: boolean | null;
+  effective_trim_silence: boolean;
+  normalize_audio: boolean | null;
+  effective_normalize_audio: boolean;
+  skip_sponsor_chapters: boolean | null;
+  effective_skip_sponsor_chapters: boolean;
+  intro_skip_seconds: number;
+  outro_skip_seconds: number;
   /** Whether new episodes of this show are worth a notification. */
   notify: boolean;
   active: boolean;
@@ -156,6 +164,11 @@ export interface AppSettings {
   default_playback_rate: number;
   /** Default number of newest episodes to pre-download, for feeds that do not override it. */
   global_auto_download_count: number;
+  global_trim_silence: boolean;
+  global_normalize_audio: boolean;
+  global_skip_sponsor_chapters: boolean;
+  /** False when the server has no ffmpeg, so the switches would do nothing. */
+  audio_processing_available: boolean;
 }
 
 export interface FeedUsage {

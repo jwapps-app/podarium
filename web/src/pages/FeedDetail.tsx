@@ -183,6 +183,11 @@ interface SettingsProps {
     retention_days: number | null;
     playback_rate: number | null;
     notify: boolean;
+    trim_silence: boolean | null;
+    normalize_audio: boolean | null;
+    skip_sponsor_chapters: boolean | null;
+    intro_skip_seconds: number;
+    outro_skip_seconds: number;
     active: boolean;
   };
   globalMode: RetentionMode | undefined;
@@ -201,6 +206,14 @@ interface SettingsProps {
     playback_rate?: number;
     clear_playback_rate?: boolean;
     notify?: boolean;
+    trim_silence?: boolean;
+    normalize_audio?: boolean;
+    skip_sponsor_chapters?: boolean;
+    clear_trim_silence?: boolean;
+    clear_normalize_audio?: boolean;
+    clear_skip_sponsor_chapters?: boolean;
+    intro_skip_seconds?: number;
+    outro_skip_seconds?: number;
   }) => void;
 }
 
@@ -228,6 +241,16 @@ function FeedSettings({
   const [days, setDays] = useState(feed.retention_days === null ? "" : String(feed.retention_days));
   const [active, setActive] = useState(feed.active);
   const [notify, setNotify] = useState(feed.notify);
+  // "" is inherit, "on"/"off" are explicit -- a tri-state, like retention above.
+  const [trim, setTrim] = useState(feed.trim_silence === null ? "" : String(feed.trim_silence));
+  const [normalize, setNormalize] = useState(
+    feed.normalize_audio === null ? "" : String(feed.normalize_audio),
+  );
+  const [skipSponsors, setSkipSponsors] = useState(
+    feed.skip_sponsor_chapters === null ? "" : String(feed.skip_sponsor_chapters),
+  );
+  const [intro, setIntro] = useState(String(feed.intro_skip_seconds));
+  const [outro, setOutro] = useState(String(feed.outro_skip_seconds));
   // "" is inherit here too. Speed is the setting that varies most by show: a dense
   // interview holds up at 1.5x where a scripted narrative does not.
   const [rate, setRate] = useState(feed.playback_rate === null ? "" : String(feed.playback_rate));
@@ -243,6 +266,15 @@ function FeedSettings({
       ...(days === "" ? { clear_retention_days: true } : { retention_days: Number(days) }),
       ...(rate === "" ? { clear_playback_rate: true } : { playback_rate: Number(rate) }),
       notify,
+      intro_skip_seconds: Math.max(0, Number(intro) || 0),
+      outro_skip_seconds: Math.max(0, Number(outro) || 0),
+      ...(trim === "" ? { clear_trim_silence: true } : { trim_silence: trim === "true" }),
+      ...(normalize === ""
+        ? { clear_normalize_audio: true }
+        : { normalize_audio: normalize === "true" }),
+      ...(skipSponsors === ""
+        ? { clear_skip_sponsor_chapters: true }
+        : { skip_sponsor_chapters: skipSponsors === "true" }),
     });
   };
 
@@ -315,6 +347,75 @@ function FeedSettings({
         <div className="field-hint">
           Every episode of this show starts at this speed. The player&rsquo;s speed button
           still overrides it for the episode you are listening to.
+        </div>
+      </div>
+
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="trim">Trim silence</label>
+          <select id="trim" value={trim} onChange={(event) => setTrim(event.target.value)}>
+            <option value="">Inherit global</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="normalize">Level loudness</label>
+          <select
+            id="normalize"
+            value={normalize}
+            onChange={(event) => setNormalize(event.target.value)}
+          >
+            <option value="">Inherit global</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </div>
+
+        <div className="field">
+          <label htmlFor="skip-sponsors">Skip sponsor chapters</label>
+          <select
+            id="skip-sponsors"
+            value={skipSponsors}
+            onChange={(event) => setSkipSponsors(event.target.value)}
+          >
+            <option value="">Inherit global</option>
+            <option value="true">On</option>
+            <option value="false">Off</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="field-row">
+        <div className="field">
+          <label htmlFor="intro">Skip intro (seconds)</label>
+          <input
+            id="intro"
+            type="number"
+            min={0}
+            value={intro}
+            onChange={(event) => setIntro(event.target.value)}
+          />
+          <div className="field-hint">
+            For a show that opens with the same music or ad read every week. Starting an
+            episode from the beginning jumps past this.
+          </div>
+        </div>
+
+        <div className="field">
+          <label htmlFor="outro">Skip outro (seconds)</label>
+          <input
+            id="outro"
+            type="number"
+            min={0}
+            value={outro}
+            onChange={(event) => setOutro(event.target.value)}
+          />
+          <div className="field-hint">
+            Trailing credits or a standing sign-off. The episode counts as finished this
+            far from the end, and the queue moves on.
+          </div>
         </div>
       </div>
 

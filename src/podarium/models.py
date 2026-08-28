@@ -25,6 +25,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
     true,
 )
@@ -151,6 +152,22 @@ class Feed(Base):
         Boolean, nullable=False, default=True, server_default=true()
     )
 
+    # Audio processing, NULL inheriting the global as the other overrides do. Both are
+    # per-show by nature: trimming silence transforms an interview and mangles a scripted
+    # narrative, and a show that is already mastered well needs no levelling.
+    trim_silence: Mapped[bool | None] = mapped_column(Boolean)
+    normalize_audio: Mapped[bool | None] = mapped_column(Boolean)
+    skip_sponsor_chapters: Mapped[bool | None] = mapped_column(Boolean)
+
+    # Fixed dead air at the edges of every episode of a show -- a musical intro, a
+    # standing ad read, an outro asking for reviews. Seconds, 0 meaning none.
+    intro_skip_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    outro_skip_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
     created_at: Mapped[datetime] = _now_col(nullable=False)
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
 
@@ -192,6 +209,24 @@ class Episode(Base):
     chapters_url: Mapped[str | None] = mapped_column(Text)
     chapters_json: Mapped[str | None] = mapped_column(Text)
     chapters_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # podcast:transcript, fetched and stored by the server like chapters. The text is kept
+    # so the library can be searched by what was said, not only by what it was titled.
+    transcript_url: Mapped[str | None] = mapped_column(Text)
+    transcript_type: Mapped[str | None] = mapped_column(String(128))
+    transcript_text: Mapped[str | None] = mapped_column(Text)
+    transcript_fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # A second copy with silence trimmed and/or loudness levelled. Kept alongside the
+    # original rather than replacing it: processing is lossy and a setting can be turned
+    # back off, which would otherwise mean re-downloading everything.
+    processed_path: Mapped[str | None] = mapped_column(Text)
+    processed_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # What the original audio was, so a publisher quietly re-cutting it is detectable.
+    audio_sha256: Mapped[str | None] = mapped_column(String(64))
+    # Set when the publisher's copy stops matching the one on disk.
+    replaced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # NULL means not on disk. Retention nulls this; it never deletes the row.
     local_path: Mapped[str | None] = mapped_column(Text)
@@ -287,6 +322,17 @@ class AppSettings(Base):
     # Starting playback speed for every episode. Stored server-side rather than in the
     # browser so the iOS client starts at the same speed as the web player.
     default_playback_rate: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
+
+    # Defaults every show inherits unless it overrides them.
+    global_trim_silence: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    global_normalize_audio: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    global_skip_sponsor_chapters: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now())
 
 
@@ -309,6 +355,25 @@ class LoginAttempt(Base):
     username: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
     attempted_at: Mapped[datetime] = _now_col(nullable=False, index=True)
+
+
+class Bookmark(Base):
+    """A timestamp inside an episode worth coming back to.
+
+    Separate from starring, which is about the whole episode. This is "the bit at 41:20",
+    and it is the thing a podcast leaves you with that is hardest to find again: you
+    remember a sentence and have no way back to it.
+    """
+
+    __tablename__ = "bookmarks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    position_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _now_col(nullable=False)
+    updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now(), index=True)
 
 
 class PushSubscription(Base):

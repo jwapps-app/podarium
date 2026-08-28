@@ -31,6 +31,8 @@ def test_feed_output_rewrites_artwork_to_a_local_path():
         # Set explicitly, like active above: column defaults are applied on flush, and this
         # feed is never flushed.
         notify=True,
+        intro_skip_seconds=0,
+        outro_skip_seconds=0,
         **STAMPS,
     )
     payload = feed_out(feed).model_dump()

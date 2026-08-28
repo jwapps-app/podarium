@@ -19,6 +19,7 @@ from podarium.auth import current_user
 from podarium.clients.http import build_client
 from podarium.db import get_session
 from podarium.jobs.artwork import artwork_by_hash, ensure_episode_artwork, ensure_feed_artwork
+from podarium.jobs.audio import PROCESSED_MEDIA_TYPE
 from podarium.models import ArtworkCache, Episode, Feed, User
 from podarium.services import get_app_settings
 
@@ -159,10 +160,18 @@ async def stream_episode(
 
     media_type = episode.enclosure_type or "audio/mpeg"
 
-    if episode.local_path:
-        path = Path(episode.local_path)
+    # The processed copy wins when it exists: it is what the show asked for, and it is
+    # produced only when trimming or levelling is switched on. Falling back to the original
+    # means a processing failure costs the feature and not the episode.
+    for candidate, kind in (
+        (episode.processed_path, PROCESSED_MEDIA_TYPE),
+        (episode.local_path, media_type),
+    ):
+        if not candidate:
+            continue
+        path = Path(candidate)
         if path.exists():
-            return _serve_local(path, request, media_type)
+            return _serve_local(path, request, kind)
 
     if not episode.enclosure_url:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Episode has no audio")

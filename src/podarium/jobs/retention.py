@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.db import get_sessionmaker
+from podarium.jobs.audio import drop_processed
 from podarium.metrics import download_dir_bytes, purged_total
 from podarium.models import Episode, EpisodeState, Feed, QueueItem, RetentionMode
 from podarium.services import effective_retention, get_app_settings
@@ -42,6 +43,10 @@ async def purge_episode(session: AsyncSession, episode: Episode, *, reason: str 
     except OSError as exc:
         log.warning("could not unlink %s: %s", episode.local_path, exc)
         return False
+
+    # The processed copy goes with it. Leaving it behind would mean retention reporting a
+    # reclaim while half the bytes stayed on disk, and the storage panel adding up wrong.
+    drop_processed(episode)
 
     episode.local_path = None
     episode.local_bytes = None

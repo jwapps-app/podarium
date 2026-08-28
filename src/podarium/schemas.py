@@ -121,6 +121,11 @@ class FeedUpdateRequest(BaseModel):
     retention_days: int | None = Field(default=None, ge=0)
     playback_rate: float | None = Field(default=None, gt=0, le=5)
     notify: bool | None = None
+    trim_silence: bool | None = None
+    normalize_audio: bool | None = None
+    skip_sponsor_chapters: bool | None = None
+    intro_skip_seconds: int | None = Field(default=None, ge=0, le=600)
+    outro_skip_seconds: int | None = Field(default=None, ge=0, le=600)
     active: bool | None = None
     # NULL is meaningful on these columns (it means "inherit the global"), so an explicit
     # clear needs its own flag rather than being confused with "field omitted".
@@ -128,6 +133,9 @@ class FeedUpdateRequest(BaseModel):
     clear_retention_days: bool = False
     clear_auto_download_count: bool = False
     clear_playback_rate: bool = False
+    clear_trim_silence: bool = False
+    clear_normalize_audio: bool = False
+    clear_skip_sponsor_chapters: bool = False
 
 
 class FeedOut(BaseModel):
@@ -151,6 +159,15 @@ class FeedOut(BaseModel):
     playback_rate: float | None
     effective_playback_rate: float
     notify: bool
+    # NULL inherits the global; the effective_* value is what actually applies.
+    trim_silence: bool | None
+    effective_trim_silence: bool
+    normalize_audio: bool | None
+    effective_normalize_audio: bool
+    skip_sponsor_chapters: bool | None
+    effective_skip_sponsor_chapters: bool
+    intro_skip_seconds: int
+    outro_skip_seconds: int
     active: bool
     last_fetched_at: datetime | None
     fetch_error: str | None
@@ -244,6 +261,13 @@ class SettingsOut(BaseModel):
     user_agent: str
     default_playback_rate: float
     global_auto_download_count: int
+    global_trim_silence: bool
+    global_normalize_audio: bool
+    global_skip_sponsor_chapters: bool
+    # Whether the server can actually do the processing those first two ask for. Reported
+    # so the UI can say "unavailable on this server" rather than offering a switch that
+    # silently does nothing.
+    audio_processing_available: bool
 
 
 class SettingsUpdate(BaseModel):
@@ -257,6 +281,9 @@ class SettingsUpdate(BaseModel):
     # Bounded to what browsers and AVPlayer actually honour; outside this range playback
     # is either unintelligible or silently clamped by the platform.
     default_playback_rate: float | None = Field(default=None, ge=0.5, le=4.0)
+    global_trim_silence: bool | None = None
+    global_normalize_audio: bool | None = None
+    global_skip_sponsor_chapters: bool | None = None
 
 
 class SyncOut(BaseModel):
@@ -298,6 +325,9 @@ def feed_out(
     new_episode_count: int | None = None,
     global_auto_download_count: int = 0,
     global_playback_rate: float = 1.0,
+    global_trim_silence: bool = False,
+    global_normalize_audio: bool = False,
+    global_skip_sponsor_chapters: bool = False,
 ) -> FeedOut:
     return FeedOut(
         id=feed.id,
@@ -319,6 +349,22 @@ def feed_out(
         retention_mode=feed.retention_mode,
         retention_days=feed.retention_days,
         notify=feed.notify,
+        trim_silence=feed.trim_silence,
+        effective_trim_silence=(
+            feed.trim_silence if feed.trim_silence is not None else global_trim_silence
+        ),
+        normalize_audio=feed.normalize_audio,
+        effective_normalize_audio=(
+            feed.normalize_audio if feed.normalize_audio is not None else global_normalize_audio
+        ),
+        skip_sponsor_chapters=feed.skip_sponsor_chapters,
+        effective_skip_sponsor_chapters=(
+            feed.skip_sponsor_chapters
+            if feed.skip_sponsor_chapters is not None
+            else global_skip_sponsor_chapters
+        ),
+        intro_skip_seconds=feed.intro_skip_seconds,
+        outro_skip_seconds=feed.outro_skip_seconds,
         playback_rate=feed.playback_rate,
         effective_playback_rate=(
             feed.playback_rate if feed.playback_rate is not None else global_playback_rate

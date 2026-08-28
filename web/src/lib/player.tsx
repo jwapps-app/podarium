@@ -196,6 +196,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
 
       episodeRef.current = next;
+      outroFiredRef.current = false;
       setEpisode(next);
       setPosition(next.position_seconds);
       setDuration(next.duration_seconds ?? 0);
@@ -221,7 +222,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // rather than carrying over on its own.
       audio.playbackRate = rateRef.current;
 
-      const startAt = next.played ? 0 : next.position_seconds;
+      // Only when starting from the beginning. Resuming at 4:12 means you were already
+      // past the intro, and jumping forward from there would lose your place.
+      const intro = feedSkipsRef.current.get(next.feed_id)?.intro ?? 0;
+      const resumeAt = next.played ? 0 : next.position_seconds;
+      const startAt = resumeAt > 0 ? resumeAt : intro;
       const begin = () => {
         // Seeking before metadata arrives is silently ignored, so resume happens here.
         if (startAt > 0 && Number.isFinite(audio.duration) && startAt < audio.duration) {
@@ -297,6 +302,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // current map without being rebuilt -- and therefore re-cueing -- every time feeds refetch.
   // Populated from the feeds query further down, which the lock screen already needs.
   const feedRatesRef = useRef(new Map<number, number>());
+  // Per-show intro/outro trim, read at cue time and at the end of an episode.
+  const feedSkipsRef = useRef(new Map<number, { intro: number; outro: number }>());
+  // Reset per episode; see the outro check in the timeupdate handler.
+  const outroFiredRef = useRef(false);
 
   // Come back up holding whatever was playing when the app was last closed.
   //
@@ -415,6 +424,28 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setPosition((current) =>
         Math.floor(current) === Math.floor(audio.currentTime) ? current : audio.currentTime,
       );
+
+      // A show with a standing sign-off can be declared over before the file is. Reaching
+      // the trailing credits counts as finishing: the same path as a real end, so the
+      // episode is marked played and the queue moves on.
+      //
+      // Guarded by a flag rather than by the position, because timeupdate keeps firing
+      // inside the outro window -- without it this would run several times a second, each
+      // one re-reporting the episode and re-triggering the queue.
+      const outro = episodeRef.current
+        ? feedSkipsRef.current.get(episodeRef.current.feed_id)?.outro ?? 0
+        : 0;
+      if (
+        !outroFiredRef.current &&
+        outro > 0 &&
+        !audio.paused &&
+        Number.isFinite(audio.duration) &&
+        audio.duration > outro &&
+        audio.currentTime >= audio.duration - outro
+      ) {
+        outroFiredRef.current = true;
+        finish();
+      }
     };
     const onDuration = () => {
       if (Number.isFinite(audio.duration)) setDuration(audio.duration);
@@ -425,7 +456,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setBuffering(false);
       setError("Playback failed. The episode may no longer be available from the publisher.");
     };
-    const onEnded = () => {
+    const finish = () => {
+      audio.pause();
       setPlaying(false);
       reportPosition(audio.duration || 0, { played: true, force: true });
       if (sleepAtEndRef.current) {
@@ -438,6 +470,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const next = advanceRef.current?.() ?? null;
       if (next) play(next);
     };
+
+    const onEnded = () => finish();
 
     audio.addEventListener("play", onPlay);
     audio.addEventListener("pause", onPause);
@@ -552,6 +586,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     feedRatesRef.current = new Map(
       (feeds ?? []).map((feed) => [feed.id, feed.effective_playback_rate]),
+    );
+    feedSkipsRef.current = new Map(
+      (feeds ?? []).map((feed) => [
+        feed.id,
+        { intro: feed.intro_skip_seconds, outro: feed.outro_skip_seconds },
+      ]),
     );
   }, [feeds]);
 

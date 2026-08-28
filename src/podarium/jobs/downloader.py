@@ -8,6 +8,7 @@ title does not orphan a file we already have.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import mimetypes
 from datetime import UTC, datetime, timedelta
@@ -21,7 +22,8 @@ from podarium.clients.http import build_client
 from podarium.config import get_settings
 from podarium.db import get_sessionmaker
 from podarium.metrics import download_total, downloaded_bytes_total
-from podarium.models import DownloadJob, Episode, JobState
+from podarium.jobs.audio import process_episode
+from podarium.models import DownloadJob, Episode, Feed, JobState
 from podarium.services import get_app_settings
 
 log = logging.getLogger(__name__)
@@ -139,9 +141,11 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
                             f"enclosure declares {declared_length} bytes, over the "
                             f"{max_bytes} byte limit (DOWNLOAD_MAX_BYTES)"
                         )
+                digest = hashlib.sha256()
                 with partial.open("wb") as handle:
                     async for chunk in response.aiter_bytes(chunk_size=256 * 1024):
                         handle.write(chunk)
+                        digest.update(chunk)
                         written += len(chunk)
                         if written > max_bytes:
                             raise ValueError(
@@ -179,6 +183,10 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
         episode.local_bytes = written
         episode.downloaded_at = datetime.now(UTC)
         episode.purged_at = None
+        # What we actually received, so a publisher quietly re-cutting this episode later
+        # is something the server can notice rather than something you find out by ear.
+        episode.audio_sha256 = digest.hexdigest()
+        episode.replaced_at = None
         job.state = JobState.done
         job.last_error = None
         await session.commit()
@@ -186,6 +194,12 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
         downloaded_bytes_total.inc(written)
         download_total.labels(result="done").inc()
         log.info("downloaded episode %s (%s bytes)", episode.id, written)
+
+        # After the row is committed, deliberately: processing is slow and optional, and a
+        # failure in it must not cost a download that already succeeded.
+        feed = await session.get(Feed, episode.feed_id)
+        if feed is not None:
+            await process_episode(session, episode, feed, await get_app_settings(session))
     except Exception as exc:  # noqa: BLE001 - every failure retries with backoff
         partial.unlink(missing_ok=True)
         await _fail_job(session, job, f"{type(exc).__name__}: {exc}")

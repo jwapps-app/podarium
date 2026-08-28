@@ -150,6 +150,9 @@ async def sync(
                 new_episode_count=counts.get(feed.id, (0, 0, 0))[2],
                 global_auto_download_count=app_settings.global_auto_download_count,
             global_playback_rate=app_settings.default_playback_rate,
+        global_trim_silence=app_settings.global_trim_silence,
+        global_normalize_audio=app_settings.global_normalize_audio,
+        global_skip_sponsor_chapters=app_settings.global_skip_sponsor_chapters,
             )
             for feed in changed_feeds
         ],

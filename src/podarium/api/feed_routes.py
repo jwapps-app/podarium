@@ -36,6 +36,9 @@ async def _feed_out(session: AsyncSession, feed: Feed, user_id: int) -> FeedOut:
         new_episode_count=new,
         global_auto_download_count=app_settings.global_auto_download_count,
         global_playback_rate=app_settings.default_playback_rate,
+        global_trim_silence=app_settings.global_trim_silence,
+        global_normalize_audio=app_settings.global_normalize_audio,
+        global_skip_sponsor_chapters=app_settings.global_skip_sponsor_chapters,
     )
 
 
@@ -59,6 +62,9 @@ async def list_feeds(
             new_episode_count=counts.get(f.id, (0, 0, 0))[2],
             global_auto_download_count=app_settings.global_auto_download_count,
             global_playback_rate=app_settings.default_playback_rate,
+        global_trim_silence=app_settings.global_trim_silence,
+        global_normalize_audio=app_settings.global_normalize_audio,
+        global_skip_sponsor_chapters=app_settings.global_skip_sponsor_chapters,
         )
         for f in feeds
     ]
@@ -144,6 +150,22 @@ async def update_feed(
 
     if body.notify is not None:
         feed.notify = body.notify
+
+    if body.intro_skip_seconds is not None:
+        feed.intro_skip_seconds = body.intro_skip_seconds
+    if body.outro_skip_seconds is not None:
+        feed.outro_skip_seconds = body.outro_skip_seconds
+
+    # The same inherit-or-override dance the settings above use.
+    for clear, value, attribute in (
+        (body.clear_trim_silence, body.trim_silence, "trim_silence"),
+        (body.clear_normalize_audio, body.normalize_audio, "normalize_audio"),
+        (body.clear_skip_sponsor_chapters, body.skip_sponsor_chapters, "skip_sponsor_chapters"),
+    ):
+        if clear:
+            setattr(feed, attribute, None)
+        elif value is not None:
+            setattr(feed, attribute, value)
 
     # NULL means "inherit the global", so clearing needs an explicit flag rather than
     # being inferred from an omitted field.

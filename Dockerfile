@@ -51,8 +51,11 @@ ENV PATH="/opt/venv/bin:$PATH" \
     WEB_DIR=/app/web \
     PODARIUM_BUILD=$GIT_SHA
 
+# ffmpeg is for trimming silence and levelling loudness after a download. It is the
+# largest thing in this image by some way (~100 MB unpacked); without it those settings
+# report themselves unavailable and everything else works exactly as before.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl && \
+    apt-get install -y --no-install-recommends curl ffmpeg && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
