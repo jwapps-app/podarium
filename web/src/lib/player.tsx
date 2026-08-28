@@ -602,8 +602,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // the loaded edge and the element reports `ended`, because as far as it knows that
       // is all the media there is. Treating that as a finished episode marks it played and
       // moves the queue on, mid-episode.
+      // Measured against the element's own duration, not the feed's.
+      //
+      // The feed describes the publisher's file; once trimming is on, that is not the file
+      // this server sends -- a conversational show loses better than a tenth of its length
+      // to removed pauses. Judging a real ending against the publisher's figure called
+      // every trimmed episode a truncated stream, which is the same shape as the fault
+      // this guard exists to catch. The element's duration comes from the Content-Length
+      // of what actually arrived, so it describes the audio in hand.
       const claimed = episodeRef.current?.duration_seconds ?? 0;
-      const shortfall = claimed > 0 && audio.currentTime < claimed * ENDED_AGREEMENT;
+      const expected = Number.isFinite(audio.duration) && audio.duration > 0
+        ? audio.duration
+        : claimed;
+      const shortfall = expected > 0 && audio.currentTime < expected * ENDED_AGREEMENT;
 
       if (shortfall && recoveryRef.current < MAX_STREAM_RECOVERIES) {
         recoveryRef.current += 1;
