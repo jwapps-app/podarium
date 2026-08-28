@@ -46,7 +46,29 @@ def _serializer(settings: Settings) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(settings.secret_key, salt="podarium-session")
 
 
-def issue_session_cookie(response: Response, user: User, settings: Settings) -> None:
+def request_is_secure(request: Request) -> bool:
+    """Whether *this* request arrived over TLS.
+
+    Read from the request rather than from PUBLIC_URL, because one server is reachable two
+    ways: through a hostname that terminates TLS, and directly on the LAN over plain HTTP.
+    A single configured answer is wrong for one of them, and wrong in an unhelpful
+    direction -- a cookie marked Secure is silently discarded by the browser over http, so
+    signing in appears to work and every request afterwards is anonymous, with nothing in
+    any log to say why.
+
+    X-Forwarded-Proto is what a TLS-terminating proxy sets; the scheme itself covers the
+    case where nothing is in front. Spoofing the header only lets someone mark their own
+    cookie Secure and lose it, so there is nothing to gain by lying.
+    """
+    forwarded = request.headers.get("x-forwarded-proto", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip().lower() == "https"
+    return request.url.scheme == "https"
+
+
+def issue_session_cookie(
+    response: Response, user: User, settings: Settings, *, secure: bool
+) -> None:
     token = _serializer(settings).dumps({"uid": user.id})
     response.set_cookie(
         settings.session_cookie_name,
@@ -54,8 +76,7 @@ def issue_session_cookie(response: Response, user: User, settings: Settings) -> 
         max_age=settings.session_max_age_seconds,
         httponly=True,
         samesite="lax",
-        # PUBLIC_URL tells us whether the deployment is actually behind TLS.
-        secure=settings.public_url.startswith("https://"),
+        secure=secure,
         path="/",
     )
 

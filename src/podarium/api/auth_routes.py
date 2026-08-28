@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -7,6 +7,7 @@ from podarium.auth import (
     current_user,
     generate_api_token,
     issue_session_cookie,
+    request_is_secure,
     verify_password,
 )
 from podarium.config import Settings, get_settings
@@ -46,6 +47,7 @@ def _user_out(user: User) -> UserOut:
 @router.post("/login", response_model=UserOut)
 async def login(
     body: LoginRequest,
+    request: Request,
     response: Response,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
@@ -103,7 +105,7 @@ async def login(
         user.totp_last_step = step
 
     await record_attempt(session, body.username, succeeded=True)
-    issue_session_cookie(response, user, settings)
+    issue_session_cookie(response, user, settings, secure=request_is_secure(request))
     return _user_out(user)
 
 

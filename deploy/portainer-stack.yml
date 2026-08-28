@@ -152,14 +152,12 @@ services:
       # mismatch shows up as the API restarting in a loop while Postgres looks healthy.
       DATABASE_URL: postgresql+asyncpg://podarium:${DB_PASSWORD}@postgres:5432/podarium
 
-      # How the browser reaches this. Leave the variable unset for the LAN address; set it
-      # to the Cloudflare hostname once that fronts it.
+      # How the browser reaches this. Set it to the Cloudflare hostname once that fronts it.
       #
-      # Its only job is deciding whether the session cookie is marked Secure. The two
-      # directions are not symmetric: an http value reached over https merely leaves the
-      # cookie unflagged, which browsers accept, but an https value reached over plain http
-      # makes the browser drop the cookie entirely -- a login screen that never goes away,
-      # with nothing in any log. So if you use both routes, leave this on the LAN default.
+      # No longer decides whether the session cookie is marked Secure -- that follows the
+      # scheme of each request, so the same server can be used over both the public
+      # hostname and the LAN address without one of them silently failing to stay signed
+      # in. It is now only the base for absolute links.
       PUBLIC_URL: ${PUBLIC_URL:-http://192.168.1.30:8044}
 
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment variables panel}
