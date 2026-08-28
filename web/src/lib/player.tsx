@@ -44,6 +44,14 @@ const MAX_TICK_SECONDS = 5;
  *  stopped, which is exactly when iOS suspends a backgrounded page. */
 const HANDOVER_LEAD_SECONDS = 1;
 
+/** How close the element's duration must be to the feed's before it is believed.
+ *
+ *  A stream that is still arriving can report the duration of what it has, not of what it
+ *  is -- which would put "the end" somewhere in the middle. Feed durations are themselves
+ *  approximate, so this is a loose sanity check rather than a comparison: it is looking for
+ *  a duration that is obviously short, not one that is a few seconds out. */
+const DURATION_AGREEMENT = 0.95;
+
 interface PlayerValue {
   episode: Episode | null;
   playing: boolean;
@@ -501,11 +509,35 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ? feedSkipsRef.current.get(episodeRef.current.feed_id)?.outro ?? 0
         : 0;
       const margin = Math.max(outro, HANDOVER_LEAD_SECONDS);
+
+      // Only when the playhead *arrived* here by playing.
+      //
+      // `advanced` is the same natural-progression test the listening counter uses: a tick
+      // moved things forward by about what a tick can cover. A seek produces a jump far
+      // outside that, and without this check dragging the scrubber near the end counted as
+      // reaching it -- the episode was marked played and the queue moved on, mid-episode.
+      //
+      // Worse while an episode is still loading, because a partly-buffered stream can
+      // report a duration shorter than the real one, putting the "end" somewhere in the
+      // middle. So the element's duration is trusted only when it roughly agrees with what
+      // the feed said; when it does not, the file is still arriving and this stays out of
+      // the way until it settles.
+      const arrivedByPlaying =
+        previous !== null && audio.currentTime - previous > 0 &&
+        audio.currentTime - previous <= MAX_TICK_SECONDS;
+
+      const claimed = episodeRef.current?.duration_seconds ?? 0;
+      const durationLooksSettled =
+        Number.isFinite(audio.duration) &&
+        audio.duration > margin &&
+        (claimed <= 0 || audio.duration >= claimed * DURATION_AGREEMENT);
+
       if (
         !outroFiredRef.current &&
         !audio.paused &&
-        Number.isFinite(audio.duration) &&
-        audio.duration > margin &&
+        !audio.seeking &&
+        arrivedByPlaying &&
+        durationLooksSettled &&
         audio.currentTime >= audio.duration - margin
       ) {
         outroFiredRef.current = true;
