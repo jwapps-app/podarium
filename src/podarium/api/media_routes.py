@@ -8,6 +8,7 @@ issuing byte-range requests, and a server that answers them with 200 breaks scru
 from __future__ import annotations
 
 import re
+from email.utils import formatdate, parsedate_to_datetime
 from pathlib import Path
 
 import httpx
@@ -19,9 +20,13 @@ from podarium.auth import current_user
 from podarium.clients.http import build_client
 from podarium.db import get_session
 from podarium.jobs.artwork import artwork_by_hash, ensure_episode_artwork, ensure_feed_artwork
-from podarium.jobs.audio import PROCESSED_MEDIA_TYPE
 from podarium.models import ArtworkCache, Episode, Feed, User
 from podarium.services import get_app_settings
+from podarium.streaming import (
+    VERSION_PARAM,
+    copy_for_token,
+    preferred_copy,
+)
 
 router = APIRouter(prefix="/api", tags=["media"])
 
@@ -57,7 +62,18 @@ def parse_range(header: str | None, size: int) -> tuple[int, int] | None:
         end = int(raw_end) if raw_end else size - 1
 
     if start >= size or start > end:
-        raise HTTPException(status.HTTP_416_RANGE_NOT_SATISFIABLE, detail="Range not satisfiable")
+        # Deliberately not a 416.
+        #
+        # 416 is the correct answer and it is the wrong thing to send. A client asking for
+        # a byte past the end is a client working from a length that no longer holds --
+        # the file behind this episode was replaced by its trimmed copy. Observed on iOS:
+        # a 416 is not read as "re-read the length", it is retried immediately, sixty-three
+        # bytes further on, over and over, while playback sits still.
+        #
+        # RFC 9110 lets a server ignore a Range it does not wish to honour. Ignoring it
+        # hands back the whole current file, which is a length the client can believe, and
+        # it recovers on its own.
+        return None
     return start, min(end, size - 1)
 
 
@@ -73,15 +89,64 @@ def _iter_file(path: Path, start: int, end: int):
             yield chunk
 
 
+def _validators(path: Path) -> tuple[str, str, float, int]:
+    """An entity tag and a last-modified date for a file on disk.
+
+    Derived from size and mtime rather than a hash of the contents: these files run to
+    hundreds of megabytes, and the question being answered is only "is this the same file
+    I was reading a moment ago", which size and mtime settle.
+    """
+    stat = path.stat()
+    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+    return etag, formatdate(stat.st_mtime, usegmt=True), stat.st_mtime, stat.st_size
+
+
+def _range_still_applies(header: str | None, etag: str, mtime: float) -> bool:
+    """Whether an If-Range condition still holds, per RFC 9110.
+
+    This is the whole point of the header, and this server needs it more than most: the
+    file behind an episode is replaced when trimming finishes, and the replacement is a
+    third shorter with an entirely different byte-to-time mapping. A player that started
+    on the original and asks for a later range holds offsets that mean nothing in the new
+    file -- so it lands past the end, decides the media is over, and stops mid-episode.
+
+    Answering such a request with 200 and the whole new file is what the header is for:
+    the player throws away what it had and resynchronises.
+    """
+    if not header:
+        return True
+    candidate = header.strip()
+    if candidate.startswith(("W/", '"')):
+        # Weak tags never validate a range; only a strong, exact match does.
+        return candidate == etag
+    try:
+        return int(parsedate_to_datetime(candidate).timestamp()) == int(mtime)
+    except (TypeError, ValueError):
+        return False
+
+
 def _serve_local(path: Path, request: Request, media_type: str) -> Response:
-    size = path.stat().st_size
-    byte_range = parse_range(request.headers.get("range"), size)
+    etag, last_modified, mtime, size = _validators(path)
+    # Validators on every response, including the 206s. Without them a client has no way
+    # to notice the bytes it is reading now came from a different file than the bytes it
+    # read a minute ago, and no way to ask us to check.
+    headers = {
+        "Accept-Ranges": "bytes",
+        "ETag": etag,
+        "Last-Modified": last_modified,
+    }
+
+    byte_range = (
+        parse_range(request.headers.get("range"), size)
+        if _range_still_applies(request.headers.get("if-range"), etag, mtime)
+        else None
+    )
 
     if byte_range is None:
         return FileResponse(
             path,
             media_type=media_type,
-            headers={"Accept-Ranges": "bytes", "Content-Length": str(size)},
+            headers={**headers, "Content-Length": str(size)},
         )
 
     start, end = byte_range
@@ -90,7 +155,7 @@ def _serve_local(path: Path, request: Request, media_type: str) -> Response:
         status_code=status.HTTP_206_PARTIAL_CONTENT,
         media_type=media_type,
         headers={
-            "Accept-Ranges": "bytes",
+            **headers,
             "Content-Range": f"bytes {start}-{end}/{size}",
             "Content-Length": str(end - start + 1),
         },
@@ -158,20 +223,15 @@ async def stream_episode(
     if episode is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Episode not found")
 
-    media_type = episode.enclosure_type or "audio/mpeg"
-
-    # The processed copy wins when it exists: it is what the show asked for, and it is
-    # produced only when trimming or levelling is switched on. Falling back to the original
-    # means a processing failure costs the feature and not the episode.
-    for candidate, kind in (
-        (episode.processed_path, PROCESSED_MEDIA_TYPE),
-        (episode.local_path, media_type),
-    ):
-        if not candidate:
-            continue
-        path = Path(candidate)
-        if path.exists():
-            return _serve_local(path, request, kind)
+    # The URL names which copy it wants, so that the bytes behind a given URL never
+    # change: see podarium.streaming. An unrecognised or absent token takes whichever
+    # copy is preferred now.
+    chosen = copy_for_token(episode, request.query_params.get(VERSION_PARAM))
+    if chosen is None:
+        preferred = preferred_copy(episode)
+        chosen = (preferred[0], preferred[1]) if preferred else None
+    if chosen is not None:
+        return _serve_local(chosen[0], request, chosen[1])
 
     if not episode.enclosure_url:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Episode has no audio")

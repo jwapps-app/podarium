@@ -26,10 +26,19 @@ def test_parse_range_forms():
     assert parse_range("bytes=0-10,20-30", size) is None
 
 
-def test_parse_range_rejects_unsatisfiable():
-    with pytest.raises(HTTPException) as exc:
-        parse_range("bytes=5000-", 1000)
-    assert exc.value.status_code == 416
+def test_an_offset_past_the_end_falls_back_to_the_whole_file():
+    """416 is correct and it is the wrong thing to send.
+
+    This asserted a 416 until an iPhone was watched doing it. A client asking for a byte
+    past the end is one working from a length that no longer holds -- the file behind the
+    episode was replaced by its trimmed copy, which is a third shorter. iOS does not read
+    the 416 as "re-read the length": it retries immediately, sixty-three bytes further on,
+    indefinitely, while playback sits still.
+
+    None means "ignore the Range", which RFC 9110 permits and which hands back a length
+    the client can believe.
+    """
+    assert parse_range("bytes=5000-", 1000) is None
 
 
 @pytest.fixture

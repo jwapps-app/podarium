@@ -12,6 +12,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from podarium.streaming import audio_duration_seconds, stream_url
 from podarium.models import Episode, Feed, RetentionMode
 
 
@@ -396,26 +397,6 @@ def feed_out(
     )
 
 
-def audio_duration_seconds(episode: Episode) -> int | None:
-    """How long the audio at /api/stream actually is.
-
-    The feed's own figure describes the publisher's file, and once trimming is switched on
-    that is no longer the file we serve -- a show with long pauses can lose ten per cent of
-    its length. A player told the wrong length draws the wrong scrubber, and, worse, cannot
-    tell "the episode ended" from "the stream ran out": both look like audio stopping
-    earlier than the duration said it would. So this reports the length of whichever copy
-    the stream endpoint would hand over, and falls back to the feed's claim only when we
-    have not measured the file ourselves.
-
-    Mirrors the preference order in media_routes.stream_episode; the two must agree.
-    """
-    if episode.processed_path and episode.processed_duration_seconds:
-        return round(episode.processed_duration_seconds)
-    if episode.local_path and episode.source_duration_seconds:
-        return round(episode.source_duration_seconds)
-    return episode.duration_seconds
-
-
 def episode_out(episode: Episode, state=None) -> EpisodeOut:
     return EpisodeOut(
         id=episode.id,
@@ -436,7 +417,7 @@ def episode_out(episode: Episode, state=None) -> EpisodeOut:
         local_bytes=episode.local_bytes,
         downloaded_at=episode.downloaded_at,
         purged_at=episode.purged_at,
-        stream_url=f"/api/stream/{episode.id}",
+        stream_url=stream_url(episode),
         played=bool(state.played) if state else False,
         position_seconds=int(state.position_seconds) if state else 0,
         listened_seconds=int(state.listened_seconds) if state else 0,
