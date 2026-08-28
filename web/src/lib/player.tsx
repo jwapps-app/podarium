@@ -11,8 +11,9 @@ import {
 import type { ReactNode } from "react";
 
 import { api } from "./api";
+import { sponsorSkipTarget } from "./chapters";
 import { shouldHonorPlatformResume, useMediaSession } from "./mediaSession";
-import type { Episode } from "./types";
+import type { Chapter, Episode } from "./types";
 
 /** How often a playing episode reports its position back to the server. Frequent enough
  *  that a crash loses only seconds, sparse enough that a 40-minute episode is a handful
@@ -306,6 +307,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const feedSkipsRef = useRef(new Map<number, { intro: number; outro: number }>());
   // Reset per episode; see the outro check in the timeupdate handler.
   const outroFiredRef = useRef(false);
+  // Chapters and whether this show wants ad breaks skipped, for the timeupdate check.
+  const skipSponsorsRef = useRef(false);
+  const chaptersRef = useRef<Chapter[]>([]);
 
   // Come back up holding whatever was playing when the app was last closed.
   //
@@ -424,6 +428,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setPosition((current) =>
         Math.floor(current) === Math.floor(audio.currentTime) ? current : audio.currentTime,
       );
+
+      // Ad breaks the publisher marked. Seeking inside the handler is safe: the jump
+      // lands outside the break, so the next tick finds nothing to skip.
+      if (skipSponsorsRef.current && chaptersRef.current.length > 0 && !audio.paused) {
+        const past = sponsorSkipTarget(chaptersRef.current, audio.currentTime);
+        if (past !== null && past > audio.currentTime) {
+          audio.currentTime = past;
+          return;
+        }
+      }
 
       // A show with a standing sign-off can be declared over before the file is. Reaching
       // the trailing credits counts as finishing: the same path as a real end, so the
@@ -594,6 +608,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ]),
     );
   }, [feeds]);
+
+  // Chapters for whatever is playing, so ad breaks can be skipped without the Now Playing
+  // view being open. Fetched under the same key that view uses, so it is one request.
+  const currentFeed = feeds?.find((feed) => feed.id === episode?.feed_id);
+  const wantsSponsorSkip = currentFeed?.effective_skip_sponsor_chapters ?? false;
+
+  const { data: chapterData } = useQuery({
+    queryKey: ["chapters", episode?.id],
+    queryFn: () => api.chapters(episode!.id),
+    enabled: episode !== null && wantsSponsorSkip,
+    staleTime: Infinity,
+  });
+
+  useEffect(() => {
+    skipSponsorsRef.current = wantsSponsorSkip;
+    chaptersRef.current = chapterData?.chapters ?? [];
+  }, [wantsSponsorSkip, chapterData]);
 
   useMediaSession({
     // Null until playback has begun, so there is no session for a stale action to reach.

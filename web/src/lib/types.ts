@@ -126,6 +126,9 @@ export interface SearchResult {
 export interface Chapter {
   start_seconds: number;
   title: string | null;
+  /** Looks like an ad break: the publisher hid it from the table of contents, or said so
+   *  in the title. */
+  sponsor: boolean;
 }
 
 export interface PushConfig {
@@ -152,6 +155,33 @@ export interface Preview {
   episode_count: number;
   already_subscribed: boolean;
   episodes: PreviewEpisode[];
+}
+
+export interface Bookmark {
+  id: number;
+  episode_id: number;
+  position_seconds: number;
+  note: string | null;
+  created_at: string;
+  episode_title: string | null;
+  feed_id: number | null;
+}
+
+export interface ShowStats {
+  feed_id: number;
+  title: string | null;
+  episodes_played: number;
+  seconds_played: number;
+}
+
+export interface Stats {
+  episodes_played: number;
+  seconds_played: number;
+  seconds_saved_by_speed: number;
+  episodes_processed: number;
+  in_progress: number;
+  bookmarks: number;
+  shows: ShowStats[];
 }
 
 export interface AppSettings {

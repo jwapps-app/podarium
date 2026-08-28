@@ -25,6 +25,7 @@ from podarium.metrics import download_total, downloaded_bytes_total
 from podarium.jobs.audio import process_episode
 from podarium.models import DownloadJob, Episode, Feed, JobState
 from podarium.services import get_app_settings
+from podarium.transcripts import ensure_transcript
 
 log = logging.getLogger(__name__)
 
@@ -197,9 +198,17 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
 
         # After the row is committed, deliberately: processing is slow and optional, and a
         # failure in it must not cost a download that already succeeded.
+        app_settings = await get_app_settings(session)
         feed = await session.get(Feed, episode.feed_id)
         if feed is not None:
-            await process_episode(session, episode, feed, await get_app_settings(session))
+            await process_episode(session, episode, feed, app_settings)
+
+        # The transcript too, so the library is searchable by what was said rather than only
+        # by what an episode was titled. Tied to downloading rather than crawled across
+        # every feed: that bounds the work to episodes you actually intend to hear, and
+        # keeps it from becoming thousands of requests at publishers who did not ask for
+        # them. Anything else fetches on demand when opened.
+        await ensure_transcript(session, episode, user_agent=app_settings.user_agent)
     except Exception as exc:  # noqa: BLE001 - every failure retries with backoff
         partial.unlink(missing_ok=True)
         await _fail_job(session, job, f"{type(exc).__name__}: {exc}")

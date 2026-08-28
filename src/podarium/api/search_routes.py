@@ -166,6 +166,56 @@ async def search_by_feed_url(
 PREVIEW_EPISODES = 20
 
 
+@router.get("/trending", response_model=list[SearchResultOut])
+async def trending(
+    category: str | None = Query(default=None),
+    limit: int = Query(default=30, ge=1, le=100),
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[SearchResultOut]:
+    """Shows worth a look, with no search term.
+
+    Search only finds what you can already name. This is the other half of discovery, and
+    it goes through Podcast Index like everything else here -- Apple is never consulted.
+    """
+    app_settings = await get_app_settings(session)
+    try:
+        results = await podcastindex.trending(
+            user_agent=app_settings.user_agent, limit=limit, category=category
+        )
+    except PodcastIndexUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+    urls, ids = await _subscribed_index(session)
+    return [
+        SearchResultOut(
+            podcast_index_id=result.podcast_index_id,
+            title=result.title,
+            author=result.author,
+            description=result.description,
+            feed_url=result.feed_url,
+            image_url=await _proxied_image(session, result.image_url),
+            episode_count=result.episode_count,
+            already_subscribed=_is_subscribed(
+                result.feed_url, result.podcast_index_id, urls, ids
+            ),
+        )
+        for result in results
+    ]
+
+
+@router.get("/categories", response_model=list[str])
+async def list_categories(
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[str]:
+    app_settings = await get_app_settings(session)
+    try:
+        return await podcastindex.categories(user_agent=app_settings.user_agent)
+    except PodcastIndexUnavailable as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+
+
 @router.get("/preview", response_model=PreviewOut)
 async def preview(
     url: str = Query(..., description="Feed URL to look at without subscribing"),

@@ -172,3 +172,30 @@ async def podcast_by_feed_id(podcast_index_id: int, *, user_agent: str) -> Podca
     if isinstance(feed, list):
         feed = feed[0] if feed else None
     return _feed_from_payload(feed) if feed else None
+
+
+async def trending(
+    *, user_agent: str, limit: int = 30, category: str | None = None
+) -> list[PodcastIndexFeed]:
+    """What is being talked about right now, optionally within one category.
+
+    Discovery without a search term. Searching only finds what you can already name, which
+    is the wrong tool for "show me something I do not know about".
+    """
+    params: dict = {"max": limit}
+    if category:
+        params["cat"] = category
+    payload = await _get("/podcasts/trending", params, user_agent)
+    results = [_feed_from_payload(item) for item in payload.get("feeds") or []]
+    return [r for r in results if r]
+
+
+async def categories(*, user_agent: str) -> list[str]:
+    """Every category Podcast Index knows, for browsing rather than guessing at names."""
+    payload = await _get("/categories/list", {}, user_agent)
+    names = [
+        item.get("name")
+        for item in payload.get("feeds") or []
+        if isinstance(item, dict) and item.get("name")
+    ]
+    return sorted(set(names))

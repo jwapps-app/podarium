@@ -1,6 +1,7 @@
 import type {
   ApiTokenSummary,
   AppSettings,
+  Bookmark,
   Chapter,
   CreatedApiToken,
   Episode,
@@ -13,6 +14,7 @@ import type {
   QueueItem,
   RetentionMode,
   SearchResult,
+  Stats,
   Storage,
   TotpSetup,
   User,
@@ -243,6 +245,27 @@ export const api = {
   settings: () => request<AppSettings>("/api/settings"),
 
   storage: () => request<Storage>("/api/storage"),
+
+  stats: () => request<Stats>("/api/stats"),
+
+  // -- bookmarks ---------------------------------------------------------------
+  bookmarks: (episodeId?: number) =>
+    request<Bookmark[]>(`/api/bookmarks${episodeId ? `?episode_id=${episodeId}` : ""}`),
+
+  addBookmark: (body: { episode_id: number; position_seconds: number; note?: string }) =>
+    request<Bookmark>("/api/bookmarks", { method: "POST", body: JSON.stringify(body) }),
+
+  updateBookmark: (id: number, note: string | null) =>
+    request<Bookmark>(`/api/bookmarks/${id}`, { method: "PATCH", body: JSON.stringify({ note }) }),
+
+  deleteBookmark: (id: number) =>
+    request<void>(`/api/bookmarks/${id}`, { method: "DELETE" }),
+
+  // -- discovery ---------------------------------------------------------------
+  trending: (category?: string) =>
+    request<SearchResult[]>(`/api/search/trending${category ? `?category=${encodeURIComponent(category)}` : ""}`),
+
+  categories: () => request<string[]>("/api/search/categories"),
 
   // -- push notifications ------------------------------------------------------
   pushConfig: () => request<PushConfig>("/api/push/config"),

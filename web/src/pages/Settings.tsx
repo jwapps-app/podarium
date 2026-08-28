@@ -45,6 +45,7 @@ export function SettingsPage() {
           audio_processing_available: settings.audio_processing_available,
         }}
       />
+      <ListeningPanel />
       <NotificationsPanel />
       <OfflinePanel />
       <OpmlPanel />
@@ -776,6 +777,87 @@ function OfflinePanel() {
       {offline.error ? (
         <div className="notice notice-error" style={{ marginTop: 12 }}>{offline.error}</div>
       ) : null}
+    </div>
+  );
+}
+
+/** What you have listened to, derived from state the server already keeps.
+ *
+ *  Nothing is recorded to produce this -- no event log, no history table. A self-hosted
+ *  server has no reason to accumulate a behavioural record, and the numbers worth seeing
+ *  do not need one.
+ */
+function ListeningPanel() {
+  const { data } = useQuery({ queryKey: ["stats"], queryFn: api.stats });
+  if (!data) return null;
+
+  const hours = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  return (
+    <div className="panel">
+      <div className="panel-title">Listening</div>
+      <p className="panel-hint">
+        Worked out from what is played and where you are in what is not. Nothing extra is
+        recorded to produce it.
+      </p>
+
+      <div className="stat-grid">
+        <div className="stat">
+          <div className="stat-value">{hours(data.seconds_played)}</div>
+          <div className="stat-label">time listened</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">{data.episodes_played}</div>
+          <div className="stat-label">episodes finished</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">{hours(data.seconds_saved_by_speed)}</div>
+          <div className="stat-label">saved by speed</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">{data.in_progress}</div>
+          <div className="stat-label">in progress</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">{data.bookmarks}</div>
+          <div className="stat-label">bookmarks</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">{data.episodes_processed}</div>
+          <div className="stat-label">episodes trimmed</div>
+        </div>
+      </div>
+
+      {data.shows.length > 0 ? (
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Show</th>
+              <th className="storage-num">Finished</th>
+              <th className="storage-num">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.shows.map((show) => (
+              <tr key={show.feed_id}>
+                <td>{show.title ?? "Untitled"}</td>
+                <td className="storage-num">{show.episodes_played}</td>
+                <td className="storage-num">{hours(show.seconds_played)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : null}
+
+      <div className="field-hint" style={{ marginTop: 12 }}>
+        An episode marked played counts as heard in full, which is true of one you finished
+        and generous about one you marked to clear it. Time saved by speed uses each
+        show&rsquo;s current setting, so changing it re-scores that show&rsquo;s history.
+      </div>
     </div>
   );
 }

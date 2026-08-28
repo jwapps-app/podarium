@@ -1349,3 +1349,47 @@ button.player-title:hover { color: var(--accent); }
   .preview-top { flex-direction: column; }
   .preview-art { width: 108px; height: 108px; }
 }
+
+/* Bookmarks inside Now Playing. The timestamp is the control -- it is what you came for. */
+.np-bookmark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-top: 1px solid var(--border);
+}
+
+.np-bookmark-jump {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  border-radius: var(--radius-sm);
+  flex: none;
+}
+
+.np-bookmark-jump:hover { background: var(--bg-hover); color: var(--accent); }
+
+.np-bookmark-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 5px 8px;
+}
+
+/* Statistics. Numbers first, label under -- the number is the thing being read. */
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat {
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+
+.stat-value { font-size: 21px; font-weight: 620; }
+.stat-label { color: var(--text-muted); font-size: 12.5px; margin-top: 2px; }

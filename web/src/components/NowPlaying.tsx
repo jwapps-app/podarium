@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../lib/api";
 import { nextChapterTarget, previousChapterTarget } from "../lib/chapters";
@@ -13,6 +13,7 @@ import { Artwork } from "./Artwork";
 import { ShareButton } from "./ShareButton";
 import {
   Back10Icon,
+  BookmarkIcon,
   CheckIcon,
   ChevronDownIcon,
   DownloadIcon,
@@ -247,6 +248,8 @@ export function NowPlaying() {
             >
               {episode.downloaded ? <TrashIcon /> : <DownloadIcon />}
             </button>
+            <BookmarkButton episodeId={episode.id} position={progress.position} />
+
             {shareUrl ? (
               <ShareButton
                 url={shareUrl}
@@ -297,6 +300,8 @@ export function NowPlaying() {
               ))}
             </section>
           ) : null}
+
+          <BookmarkList episodeId={episode.id} />
 
           <ChapterList episodeId={episode.id} />
 
@@ -399,6 +404,97 @@ function ChapterList({ episodeId }: { episodeId: number }) {
           <span className="np-chapter-time mono">{formatClock(chapter.start_seconds)}</span>
           <span className="np-chapter-title">{chapter.title ?? `Chapter ${index + 1}`}</span>
         </button>
+      ))}
+    </section>
+  );
+}
+
+/** Drops a bookmark at the current position.
+ *
+ *  No dialogue and no note prompt: the moment worth marking is passing while you decide,
+ *  and a timestamp with no note is still enough to find it again. The note is added
+ *  afterwards, from the list, if it is worth one.
+ */
+function BookmarkButton({ episodeId, position }: { episodeId: number; position: number }) {
+  const queryClient = useQueryClient();
+  const [justAdded, setJustAdded] = useState(false);
+
+  const add = useMutation({
+    mutationFn: () =>
+      api.addBookmark({ episode_id: episodeId, position_seconds: Math.floor(position) }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["bookmarks"] });
+      setJustAdded(true);
+      window.setTimeout(() => setJustAdded(false), 1500);
+    },
+  });
+
+  return (
+    <button
+      className={`btn-icon${justAdded ? " on" : ""}`}
+      onClick={() => add.mutate()}
+      disabled={add.isPending}
+      aria-label="Bookmark this moment"
+      title={`Bookmark ${formatClock(position)}`}
+    >
+      <BookmarkIcon filled={justAdded} />
+    </button>
+  );
+}
+
+/** This episode's bookmarks, in the order you would replay them. */
+function BookmarkList({ episodeId }: { episodeId: number }) {
+  const player = usePlayer();
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["bookmarks", episodeId],
+    queryFn: () => api.bookmarks(episodeId),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: number) => api.deleteBookmark(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bookmarks"] }),
+  });
+
+  const annotate = useMutation({
+    mutationFn: ({ id, note }: { id: number; note: string }) => api.updateBookmark(id, note || null),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["bookmarks"] }),
+  });
+
+  const bookmarks = data ?? [];
+  if (bookmarks.length === 0) return null;
+
+  return (
+    <section className="np-section">
+      <h2 className="np-section-title">Bookmarks</h2>
+      {bookmarks.map((bookmark) => (
+        <div className="np-bookmark" key={bookmark.id}>
+          <button
+            className="np-chapter-time mono np-bookmark-jump"
+            onClick={() => player.seek(bookmark.position_seconds)}
+            title="Jump here"
+          >
+            {formatClock(bookmark.position_seconds)}
+          </button>
+          <input
+            className="np-bookmark-note"
+            defaultValue={bookmark.note ?? ""}
+            placeholder="Add a note"
+            onBlur={(event) => {
+              if (event.target.value !== (bookmark.note ?? "")) {
+                annotate.mutate({ id: bookmark.id, note: event.target.value });
+              }
+            }}
+          />
+          <button
+            className="btn-icon"
+            onClick={() => remove.mutate(bookmark.id)}
+            aria-label="Remove bookmark"
+            title="Remove bookmark"
+          >
+            <TrashIcon />
+          </button>
+        </div>
       ))}
     </section>
   );

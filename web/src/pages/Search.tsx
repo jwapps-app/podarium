@@ -209,6 +209,8 @@ export function SearchPage() {
         )
       ) : null}
 
+      {!results && !searchError ? <TrendingPanel onPreview={setPreviewing} /> : null}
+
       {previewing ? (
         <PreviewPanel
           feedUrl={previewing}
@@ -329,6 +331,99 @@ function PreviewPanel({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Discovery without a search term.
+ *
+ *  Search only finds what you can already name, which is the wrong tool for "show me
+ *  something I do not know about". Shown only before a search, so it is an alternative to
+ *  the box rather than clutter beneath the results.
+ */
+function TrendingPanel({ onPreview }: { onPreview: (feedUrl: string) => void }) {
+  const [category, setCategory] = useState("");
+
+  const { data: categories } = useQuery({
+    queryKey: ["categories"],
+    queryFn: api.categories,
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ["trending", category],
+    queryFn: () => api.trending(category || undefined),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+
+  // Podcast Index credentials are optional, and without them this is simply unavailable --
+  // exactly as search is. Saying nothing is better than an error for a feature the server
+  // was never configured to offer.
+  if (error instanceof ApiError && error.isServiceUnavailable) return null;
+
+  return (
+    <div className="panel">
+      <div className="panel-title">Trending</div>
+      <p className="panel-hint">
+        What is being listened to right now, through Podcast Index. Apple is never
+        consulted.
+      </p>
+
+      {categories && categories.length > 0 ? (
+        <div className="field" style={{ maxWidth: 280 }}>
+          <label htmlFor="category">Category</label>
+          <select
+            id="category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          >
+            <option value="">Everything</option>
+            {categories.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <Loading label="Loading trending shows" />
+      ) : !data || data.length === 0 ? (
+        <div className="field-hint">Nothing trending in this category right now.</div>
+      ) : (
+        <div className="episode-list">
+          {data.map((result) => (
+            <article className="episode" key={result.feed_url}>
+              <Artwork
+                className="episode-art"
+                src={result.image_url}
+                alt=""
+                fallbackText={result.title}
+              />
+              <div className="episode-body">
+                <button className="episode-title" onClick={() => onPreview(result.feed_url)}>
+                  {result.title ?? result.feed_url}
+                </button>
+                <div className="episode-meta">
+                  {result.author ? <span>{result.author}</span> : null}
+                </div>
+              </div>
+              <div className="episode-actions" style={{ alignItems: "center" }}>
+                {result.already_subscribed ? (
+                  <span className="tag">Subscribed</span>
+                ) : (
+                  <button className="btn btn-sm" onClick={() => onPreview(result.feed_url)}>
+                    Details
+                  </button>
+                )}
+              </div>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

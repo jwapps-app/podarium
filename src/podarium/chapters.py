@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -39,6 +40,26 @@ MAX_BYTES = 1_000_000
 class Chapter:
     start_seconds: float
     title: str | None
+    # Whether this looks like an ad or sponsor break. Two signals, both the publisher's
+    # own: toc:false, which marks a chapter they do not want listed, and a title that says
+    # so outright.
+    sponsor: bool = False
+
+
+# What publishers actually call their ad breaks.
+#
+# Matched on word boundaries, not as substrings: "ads" inside "threads", "roads" and
+# "downloads" would otherwise skip real content. Skipping something you wanted to hear is a
+# far worse failure than sitting through an ad, so the list is short and the match is
+# strict -- an episode *about* advertising must not trip it.
+_SPONSOR_PATTERN = re.compile(
+    r"\b(sponsors?|sponsored|advert|adverts|advertisement|ads?|promo|commercials?)\b",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_sponsor(title: str | None) -> bool:
+    return bool(title) and bool(_SPONSOR_PATTERN.search(title))
 
 
 def parse_chapters(raw: str) -> list[Chapter]:
@@ -62,14 +83,18 @@ def parse_chapters(raw: str) -> list[Chapter]:
         start = item.get("startTime")
         if not isinstance(start, (int, float)) or isinstance(start, bool):
             continue
-        # toc:false marks a chapter the publisher does not want listed.
-        if item.get("toc") is False:
-            continue
         title = item.get("title")
+        clean_title = title if isinstance(title, str) and title.strip() else None
+
+        # toc:false marks a chapter the publisher does not want listed, which in practice
+        # is almost always an ad break. Kept now rather than dropped: it is exactly the
+        # thing worth skipping, and skipping needs to know where it ends.
+        hidden = item.get("toc") is False
         chapters.append(
             Chapter(
                 start_seconds=float(start),
-                title=title if isinstance(title, str) and title.strip() else None,
+                title=clean_title,
+                sponsor=hidden or _looks_like_sponsor(clean_title),
             )
         )
 

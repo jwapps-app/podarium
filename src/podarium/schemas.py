@@ -213,10 +213,16 @@ class EpisodeOut(BaseModel):
 class ChapterOut(BaseModel):
     start_seconds: float
     title: str | None
+    sponsor: bool = False
 
 
 class ChaptersOut(BaseModel):
     chapters: list[ChapterOut]
+
+
+class TranscriptOut(BaseModel):
+    available: bool
+    text: str | None
 
 
 class EpisodeListOut(BaseModel):

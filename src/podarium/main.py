@@ -22,12 +22,14 @@ from podarium import __version__
 from podarium.api import (
     admin_routes,
     auth_routes,
+    bookmark_routes,
     episode_routes,
     feed_routes,
     media_routes,
     opml_routes,
     queue_routes,
     search_routes,
+    stats_routes,
     settings_routes,
     push_routes,
     storage_routes,
@@ -190,6 +192,8 @@ for module in (
     settings_routes,
     storage_routes,
     push_routes,
+    bookmark_routes,
+    stats_routes,
     opml_routes,
 ):
     app.include_router(module.router)

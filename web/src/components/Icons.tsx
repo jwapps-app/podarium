@@ -107,6 +107,12 @@ export const ShareIcon = (p: Props) => (
   <svg {...base} {...p}><path d="M12 3v13" /><path d="m7.5 7.5 4.5-4.5 4.5 4.5" /><path d="M5 14v5a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-5" /></svg>
 );
 
+export const BookmarkIcon = ({ filled, ...p }: Props & { filled?: boolean }) => (
+  <svg {...base} {...p} fill={filled ? "currentColor" : "none"}>
+    <path d="M6.5 3.5h11v17l-5.5-4-5.5 4z" />
+  </svg>
+);
+
 /* Chapter skip. A bar against a triangle -- the "jump to a boundary" shape, deliberately
    unlike the ±10/30 arcs, which mean "nudge by a fixed amount". */
 export const PrevChapterIcon = (p: Props) => (

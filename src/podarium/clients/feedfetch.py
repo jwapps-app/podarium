@@ -36,6 +36,8 @@ class ParsedEpisode:
     enclosure_type: str | None = None
     enclosure_bytes: int | None = None
     chapters_url: str | None = None
+    transcript_url: str | None = None
+    transcript_type: str | None = None
 
 
 @dataclass(slots=True)
@@ -157,6 +159,42 @@ def _chapters_url(entry: object) -> str | None:
     return None
 
 
+# Transcript formats, best first. Plain text and SRT/VTT are what a search index wants;
+# HTML would need stripping and JSON needs a schema nobody agrees on.
+_TRANSCRIPT_PREFERENCE = ("text/plain", "application/srt", "text/srt", "text/vtt", "application/x-subrip")
+
+
+def _transcript_link(entry: object) -> tuple[str | None, str | None]:
+    """The best ``podcast:transcript`` a feed offers, as (url, type).
+
+    A show commonly publishes the same transcript several ways. The preference order picks
+    the one that turns into searchable text with the least mangling; anything unrecognised
+    is taken only if nothing better is there, since a wrong guess costs one fetch and is
+    discarded at parse time.
+    """
+    raw = entry.get("podcast_transcript") if hasattr(entry, "get") else None
+    if isinstance(raw, dict):
+        candidates = [raw]
+    elif isinstance(raw, list):
+        candidates = [item for item in raw if isinstance(item, dict)]
+    else:
+        return None, None
+
+    def rank(item: dict) -> int:
+        mime = (item.get("type") or "").lower()
+        for index, known in enumerate(_TRANSCRIPT_PREFERENCE):
+            if known in mime:
+                return index
+        return len(_TRANSCRIPT_PREFERENCE)
+
+    usable = [item for item in candidates if item.get("url") or item.get("href")]
+    if not usable:
+        return None, None
+
+    best = min(usable, key=rank)
+    return best.get("url") or best.get("href"), (best.get("type") or None)
+
+
 def parse_feed_bytes(raw: bytes) -> ParsedFeed:
     document = feedparser.parse(raw)
     channel = document.feed
@@ -189,6 +227,8 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
         else:
             description = entry.get("summary") or entry.get("description")
 
+        transcript = _transcript_link(entry)
+
         parsed.episodes.append(
             ParsedEpisode(
                 guid=guid,
@@ -204,6 +244,8 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
                 enclosure_type=enclosure.get("type"),
                 enclosure_bytes=_int_or_none(enclosure.get("length")),
                 chapters_url=_chapters_url(entry),
+                transcript_url=transcript[0],
+                transcript_type=transcript[1],
             )
         )
     return parsed

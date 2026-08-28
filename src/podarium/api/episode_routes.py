@@ -17,9 +17,11 @@ from podarium.schemas import (
     EpisodeListOut,
     EpisodeOut,
     EpisodeStateUpdate,
+    TranscriptOut,
     episode_out,
 )
 from podarium.services import enqueue_download, get_app_settings
+from podarium.transcripts import ensure_transcript
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
 
@@ -109,6 +111,9 @@ async def list_episodes(
 
     ``in_progress`` is the exception, and orders by when you last listened instead.
 
+    ``q`` matches episode title, show title, description, and -- where one has been stored
+    -- the transcript, so the library can be searched by what was said.
+
     ``notes=false`` omits ``description_html``. It is well over half the payload of a
     typical page and a list renders none of it until a row is expanded, at which point the
     client fetches the single episode. The default stays ``true`` so the existing contract
@@ -186,11 +191,25 @@ async def list_episodes(
         # escape="\\" matters: a literal % or _ in the query would otherwise be a wildcard,
         # so searching for "50%" would match everything containing "50".
         needle = "%" + q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        statement = statement.where(
+        matches = (
             Episode.title.ilike(needle, escape="\\")
             | Feed.title.ilike(needle, escape="\\")
             | Episode.description_html.ilike(needle, escape="\\")
         )
+
+        # And what was actually said, where a transcript has been stored. Full text rather
+        # than LIKE: transcripts run to hundreds of kilobytes each, and a LIKE across the
+        # library would read every one of them. This matches the GIN index built in the
+        # migration, so it is a lookup.
+        #
+        # plainto_tsquery, not to_tsquery: it takes what a person types, including
+        # punctuation and stray operators, without raising on syntax the user did not know
+        # they were writing.
+        matches = matches | func.to_tsvector(
+            "english", func.coalesce(Episode.transcript_text, "")
+        ).bool_op("@@")(func.plainto_tsquery("english", q.strip()))
+
+        statement = statement.where(matches)
     if since is not None:
         statement = statement.where(Episode.first_seen_at > since)
     if cursor:
@@ -243,10 +262,31 @@ async def get_chapters(
     chapters = await ensure_chapters(session, episode, user_agent=app_settings.user_agent)
     return ChaptersOut(
         chapters=[
-            ChapterOut(start_seconds=chapter.start_seconds, title=chapter.title)
+            ChapterOut(
+                start_seconds=chapter.start_seconds,
+                title=chapter.title,
+                sponsor=chapter.sponsor,
+            )
             for chapter in chapters
         ]
     )
+
+
+@router.get("/{episode_id}/transcript", response_model=TranscriptOut)
+async def get_transcript(
+    episode_id: int,
+    _: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> TranscriptOut:
+    """The episode's transcript, fetched by the server and cached on first request.
+
+    Returns available=false rather than a 404 when a show publishes none, because that is
+    the ordinary answer for most shows and not an error a client should handle.
+    """
+    episode = await _get_episode_or_404(session, episode_id)
+    app_settings = await get_app_settings(session)
+    text = await ensure_transcript(session, episode, user_agent=app_settings.user_agent)
+    return TranscriptOut(available=text is not None, text=text)
 
 
 @router.post("/{episode_id}/download", response_model=EpisodeOut, status_code=status.HTTP_202_ACCEPTED)

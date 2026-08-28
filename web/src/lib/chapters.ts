@@ -33,3 +33,24 @@ export function nextChapterTarget(chapters: Chapter[], position: number): number
   const next = chapters.find((chapter) => chapter.start_seconds > position);
   return next ? next.start_seconds : null;
 }
+
+/** Where playback should jump to if the playhead has entered a sponsor break.
+ *
+ *  Returns the end of the run of sponsor chapters -- shows commonly place two or three in
+ *  a row, and stopping at the first non-sponsor is what "skip the ads" means. Null when
+ *  there is nothing to skip, so the caller can leave the playhead alone.
+ *
+ *  The last chapter is never skipped even if it is flagged: with no chapter after it there
+ *  is no end to jump to, and seeking to the end of the file would count as finishing the
+ *  episode.
+ */
+export function sponsorSkipTarget(chapters: Chapter[], position: number): number | null {
+  const index = chapterIndexAt(chapters, position);
+  if (index < 0 || !chapters[index]?.sponsor) return null;
+
+  let next = index;
+  while (next < chapters.length && chapters[next].sponsor) next += 1;
+  if (next >= chapters.length) return null;
+
+  return chapters[next].start_seconds;
+}

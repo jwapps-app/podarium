@@ -85,11 +85,40 @@ def test_malformed_json_yields_no_chapters_rather_than_an_error():
     assert parse_chapters('{"chapters": "nonsense"}') == []
 
 
-def test_chapters_marked_out_of_the_table_of_contents_are_dropped():
-    assert [c.title for c in parse_chapters(
+def test_chapters_hidden_from_the_table_of_contents_are_kept_and_flagged():
+    """toc:false is a publisher saying "do not list this", which in practice is almost
+    always an ad break. Dropping it lost the one thing worth skipping -- and skipping needs
+    to know where the break ends, which only the next chapter's start tells you."""
+    chapters = parse_chapters(
         '{"chapters": [{"startTime": 0, "title": "Keep"},'
         ' {"startTime": 5, "title": "Hide", "toc": false}]}'
-    )] == ["Keep"]
+    )
+
+    assert [c.title for c in chapters] == ["Keep", "Hide"]
+    assert [c.sponsor for c in chapters] == [False, True]
+
+
+def test_a_chapter_that_says_it_is_an_ad_is_flagged_too():
+    """Plenty of shows label the break and leave it in the table of contents."""
+    chapters = parse_chapters(
+        '{"chapters": [{"startTime": 0, "title": "Interview"},'
+        ' {"startTime": 5, "title": "Sponsor: Acme"},'
+        ' {"startTime": 9, "title": "Ad break"}]}'
+    )
+
+    assert [c.sponsor for c in chapters] == [False, True, True]
+
+
+def test_ordinary_words_containing_ad_are_not_treated_as_ads():
+    """Matched on word boundaries, not substrings. "ads" inside "threads" or "downloads"
+    would otherwise skip real content, and skipping something you wanted to hear is a far
+    worse failure than sitting through an advert."""
+    titles = ["Reading the threads", "Back roads of Kansas", "Downloads and mirrors"]
+    document = '{"chapters": [' + ", ".join(
+        f'{{"startTime": {i}, "title": "{t}"}}' for i, t in enumerate(titles)
+    ) + "]}"
+
+    assert [c.sponsor for c in parse_chapters(document)] == [False, False, False]
 
 
 def test_chapters_without_a_start_time_are_skipped():

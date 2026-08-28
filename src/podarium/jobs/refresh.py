@@ -49,6 +49,11 @@ log = logging.getLogger(__name__)
 
 MAX_BACKOFF_DOUBLINGS = 6
 
+# How far a publisher's declared size may drift from what we downloaded before it is worth
+# saying so. Generous, because the declared length is unreliable in both directions: this
+# should catch a re-cut episode, not an inaccurate <enclosure length>.
+REPLACED_AUDIO_TOLERANCE = 0.10
+
 
 class RefreshOutcome:
     __slots__ = ("new_episodes", "updated_episodes", "not_modified", "error")
@@ -81,6 +86,8 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
         ("enclosure_type", parsed.enclosure_type),
         ("enclosure_bytes", parsed.enclosure_bytes),
         ("chapters_url", parsed.chapters_url),
+        ("transcript_url", parsed.transcript_url),
+        ("transcript_type", parsed.transcript_type),
     ):
         if value is None:
             # A field missing from this render of the feed is not an instruction to erase
@@ -90,6 +97,39 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
             setattr(episode, attr, value)
             changed = True
     return changed
+
+
+async def _note_replaced_audio(
+    session: AsyncSession, episode: Episode, parsed: ParsedEpisode
+) -> None:
+    """Notice when the publisher's copy stops matching the one on disk.
+
+    Nobody else can tell you this: a commercial app streams, so it simply plays whatever
+    the publisher is serving today. Holding the file makes the change visible -- an ad
+    re-insert, a quiet edit, a retraction.
+
+    Compared on the declared length rather than by refetching, because refetching every
+    episode of every feed on every refresh to checksum it would be absurd. The declared
+    length is approximate -- dynamic ad insertion makes it drift, which is why it was never
+    trusted to reject a download -- so this needs a margin, and it reports a suspicion
+    rather than a fact.
+    """
+    if episode.local_bytes is None or not parsed.enclosure_bytes:
+        return
+    if episode.replaced_at is not None:
+        return
+
+    # A percentage, not a fixed number of bytes: an ad swap in a five-minute bulletin and
+    # one in a four-hour interview are different sizes and the same event.
+    drift = abs(parsed.enclosure_bytes - episode.local_bytes) / episode.local_bytes
+    if drift > REPLACED_AUDIO_TOLERANCE:
+        episode.replaced_at = datetime.now(UTC)
+        log.info(
+            "episode %s looks re-cut: feed now declares %s bytes, we hold %s",
+            episode.id,
+            parsed.enclosure_bytes,
+            episode.local_bytes,
+        )
 
 
 async def _window_episode_ids(session: AsyncSession, feed: Feed, count: int) -> list[int]:
@@ -294,6 +334,9 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
             seen_this_pass.add(parsed_episode.guid)
 
             episode = existing.get(parsed_episode.guid)
+            if episode is not None and episode.local_path is not None:
+                await _note_replaced_audio(session, episode, parsed_episode)
+
             if episode is None:
                 episode = Episode(feed_id=feed.id, guid=parsed_episode.guid, first_seen_at=now)
                 _apply_parsed_episode(episode, parsed_episode)
