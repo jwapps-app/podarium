@@ -36,6 +36,14 @@ export const PLAYBACK_RATES = [0.8, 0.9, 1, 1.1, 1.2, 1.25, 1.5, 1.75, 2, 2.5, 3
  *  ten-second skip never counts. */
 const MAX_TICK_SECONDS = 5;
 
+/** How far before the true end to hand over to the next episode.
+ *
+ *  Long enough that the switch happens while audio is unmistakably still playing, short
+ *  enough to cost nothing audible -- the last second of a podcast is silence or a fading
+ *  outro. Waiting for `ended` instead means the handover has to happen after audio has
+ *  stopped, which is exactly when iOS suspends a backgrounded page. */
+const HANDOVER_LEAD_SECONDS = 1;
+
 interface PlayerValue {
   episode: Episode | null;
   playing: boolean;
@@ -478,23 +486,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      // A show with a standing sign-off can be declared over before the file is. Reaching
-      // the trailing credits counts as finishing: the same path as a real end, so the
-      // episode is marked played and the queue moves on.
+      // Hand over before the file actually runs out.
       //
-      // Guarded by a flag rather than by the position, because timeupdate keeps firing
-      // inside the outro window -- without it this would run several times a second, each
-      // one re-reporting the episode and re-triggering the queue.
+      // Waiting for `ended` means waiting for audio to stop, and on iOS a backgrounded page
+      // is suspended as soon as it does -- the queue then advances whenever the app is next
+      // opened, which is not what "play the next one" means. Crossing over a beat early
+      // keeps the handover inside a session that is still playing.
+      //
+      // The same path serves a show with a standing sign-off, whose outro is simply a
+      // larger margin. Guarded by a flag rather than by position, because timeupdate keeps
+      // firing inside that window and would otherwise re-report and re-advance several
+      // times a second.
       const outro = episodeRef.current
         ? feedSkipsRef.current.get(episodeRef.current.feed_id)?.outro ?? 0
         : 0;
+      const margin = Math.max(outro, HANDOVER_LEAD_SECONDS);
       if (
         !outroFiredRef.current &&
-        outro > 0 &&
         !audio.paused &&
         Number.isFinite(audio.duration) &&
-        audio.duration > outro &&
-        audio.currentTime >= audio.duration - outro
+        audio.duration > margin &&
+        audio.currentTime >= audio.duration - margin
       ) {
         outroFiredRef.current = true;
         finish();
@@ -510,18 +522,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setError("Playback failed. The episode may no longer be available from the publisher.");
     };
     const finish = () => {
-      audio.pause();
-      setPlaying(false);
       reportPosition(audio.duration || 0, { played: true, force: true });
+
       if (sleepAtEndRef.current) {
         // "Stop at the end of this episode" means this one, so it also cancels the
         // auto-advance that would otherwise start the next thing in the queue.
         sleepAtEndRef.current = false;
         setSleepAtEnd(false);
+        audio.pause();
+        setPlaying(false);
         return;
       }
+
       const next = advanceRef.current?.() ?? null;
-      if (next) play(next);
+      if (!next) {
+        audio.pause();
+        setPlaying(false);
+        return;
+      }
+
+      // Deliberately no pause before handing over.
+      //
+      // Pausing ends the platform's audio session, and on iOS a backgrounded page is
+      // suspended the moment audio stops -- so the code that would have started the next
+      // episode does not run until the app is opened again. Assigning a new source to an
+      // element that is still playing keeps one continuous session, which is what lets the
+      // queue advance while the phone is in a pocket.
+      play(next);
     };
 
     const onEnded = () => finish();
