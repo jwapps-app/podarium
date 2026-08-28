@@ -62,6 +62,12 @@ export function LoginPage() {
             id="username"
             value={username}
             autoComplete="username"
+            // iOS capitalises the first letter of a text field by default and corrects what
+            // it thinks are misspellings. A username is neither a sentence nor a word, and
+            // "Jworthington" fails to sign in with no indication of why.
+            autoCapitalize="none"
+            autoCorrect="off"
+            spellCheck={false}
             autoFocus
             onChange={(event) => setUsername(event.target.value)}
           />
