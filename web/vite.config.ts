@@ -19,8 +19,13 @@ export default defineConfig({
     sourcemap: true,
   },
   test: {
-    // The sanitiser walks a real DOM, so it needs one.
+    // The sanitiser walks a real DOM, so it needs one; component tests render into it.
     environment: "jsdom",
-    include: ["src/**/*.test.ts"],
+    // .tsx as well, or component tests are silently never discovered.
+    include: ["src/**/*.test.{ts,tsx}"],
+    // Unmount between tests: a component left mounted keeps its timers, and this suite
+    // exists largely to pin down timer behaviour.
+    globals: true,
+    setupFiles: ["src/test-setup.ts"],
   },
 });

@@ -29,6 +29,10 @@ export function Scrubber({ position, duration, onSeek, className }: Props) {
   const [dragging, setDragging] = useState<number | null>(null);
   const timeout = useRef<number | null>(null);
   const held = useRef(false);
+  // The same value as `dragging`, kept where committing can read it without reaching into
+  // a state updater. Seeking from inside one made the seek a side effect of rendering,
+  // which StrictMode is entitled to run twice -- one drag, two seeks.
+  const pending = useRef<number | null>(null);
 
   useEffect(() => () => {
     if (timeout.current !== null) window.clearTimeout(timeout.current);
@@ -48,10 +52,10 @@ export function Scrubber({ position, duration, onSeek, className }: Props) {
   const commit = () => {
     held.current = false;
     clearBackstop();
-    setDragging((value) => {
-      if (value !== null) onSeek(value);
-      return null;
-    });
+    const value = pending.current;
+    pending.current = null;
+    setDragging(null);
+    if (value !== null) onSeek(value);
   };
 
   /** Re-arm while the finger is down; only commit once it is not. */
@@ -73,7 +77,8 @@ export function Scrubber({ position, duration, onSeek, className }: Props) {
       value={Math.min(shown, max)}
       style={{ ["--progress" as string]: `${percent}%` }}
       onChange={(event) => {
-        setDragging(Number(event.target.value));
+        pending.current = Number(event.target.value);
+        setDragging(pending.current);
         armBackstop();
       }}
       onPointerDown={() => {
