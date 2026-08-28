@@ -152,10 +152,12 @@ self.addEventListener("fetch", (event) => {
     // Only touched for episodes actually saved here. Everything else is left to the
     // browser's own networking, deliberately.
     //
-    // Passing media through a service worker breaks seeking on iOS: a range request that
-    // goes out through fetch() and comes back through respondWith stops playback, and
-    // dragging past what has loaded is exactly what issues one. Desktop browsers handle
-    // the same path without complaint, which is what made this hard to see.
+    // This was once justified here by a claim that passing media through a service worker
+    // breaks seeking on iOS. That was a guess made while chasing a seek fault, and it was
+    // wrong -- the fault was a CSS width, and seeking works fine through this path. The
+    // gate stays because it is still the right shape: an episode nobody saved has nothing
+    // in the cache to serve, so intercepting it only adds a hop between the player and the
+    // network for no gain.
     //
     // The decision has to be synchronous -- respondWith cannot be called after an await --
     // so it reads a set held in memory rather than asking the cache.

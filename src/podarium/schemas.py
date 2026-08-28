@@ -12,8 +12,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from podarium.streaming import audio_duration_seconds, stream_url
 from podarium.models import Episode, Feed, RetentionMode
+from podarium.streaming import audio_duration_seconds, stream_url
 
 
 class ErrorBody(BaseModel):

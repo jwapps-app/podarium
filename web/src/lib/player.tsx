@@ -89,9 +89,6 @@ interface PlayerValue {
   sleepAtEnd: boolean;
   /** Minutes, or "episode" to stop at the end of what is playing, or null to cancel. */
   setSleepTimer: (minutes: number | "episode" | null) => void;
-  /** The audio element itself, for the ?debug=media panel. Nothing else should drive it:
-   *  every transport action belongs on this context so there is one place that decides. */
-  element: HTMLAudioElement | null;
 }
 
 const PlayerContext = createContext<PlayerValue | null>(null);
@@ -602,17 +599,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const onEnded = () => {
       // An episode that ends far short of its real length did not end -- the stream ran
       // out. iOS does this when a seek goes past what has been fetched: playback stops at
-      // the loaded edge and the element reports `ended`, because as far as it knows that
-      // is all the media there is. Treating that as a finished episode marks it played and
-      // moves the queue on, mid-episode.
-      // Measured against the element's own duration, not the feed's.
+      // the loaded edge and reports `ended`, because as far as it knows that is all the
+      // media there is. Treating that as finished marks it played and moves the queue on,
+      // mid-episode.
       //
-      // The feed describes the publisher's file; once trimming is on, that is not the file
-      // this server sends -- a conversational show loses better than a tenth of its length
-      // to removed pauses. Judging a real ending against the publisher's figure called
-      // every trimmed episode a truncated stream, which is the same shape as the fault
-      // this guard exists to catch. The element's duration comes from the Content-Length
-      // of what actually arrived, so it describes the audio in hand.
+      // Measured against the element's own duration rather than the feed's. The feed
+      // describes the publisher's file, and with trimming on that is not the file this
+      // server sends; judging a real ending against the publisher's figure called every
+      // trimmed episode a truncated one. The element's duration comes from the
+      // Content-Length of what actually arrived, so it describes the audio in hand.
       const claimed = episodeRef.current?.duration_seconds ?? 0;
       const expected = Number.isFinite(audio.duration) && audio.duration > 0
         ? audio.duration
@@ -823,9 +818,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       sleepMinutes,
       sleepAtEnd,
       setSleepTimer,
-      // Stable for the life of the provider: the element is created once, before first
-      // render, so it needs no place in the dependency list below.
-      element: audioRef.current,
     }),
     [
       episode, playing, buffering, error, playbackRate, expanded,

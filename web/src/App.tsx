@@ -1,6 +1,5 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 
-import { MediaDebug } from "./components/MediaDebug";
 import { Layout } from "./components/Layout";
 import { Loading } from "./components/Loading";
 import { useAuth } from "./lib/auth";
@@ -23,7 +22,6 @@ export function App() {
   return (
     <PlayerProvider>
       <BrowserRouter>
-        <MediaDebug />
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<LibraryPage />} />

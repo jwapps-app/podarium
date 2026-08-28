@@ -8,7 +8,7 @@ issuing byte-range requests, and a server that answers them with 200 breaks scru
 from __future__ import annotations
 
 import re
-from email.utils import formatdate, parsedate_to_datetime
+from email.utils import formatdate
 from pathlib import Path
 
 import httpx
@@ -37,8 +37,9 @@ CHUNK_SIZE = 256 * 1024
 def parse_range(header: str | None, size: int) -> tuple[int, int] | None:
     """Return an inclusive (start, end) for a single-range request, or None for the whole file.
 
-    Raises 416 for a syntactically valid range that falls outside the file, which is what
-    a player needs in order to correct itself rather than hang.
+    None also covers a range that falls outside the file: see the note at that branch for
+    why it is answered with the whole entity rather than a 416. A malformed one -- a suffix
+    range of zero bytes -- is still a 416, because there is no sane entity to hand back.
     """
     if not header:
         return None
@@ -89,58 +90,32 @@ def _iter_file(path: Path, start: int, end: int):
             yield chunk
 
 
-def _validators(path: Path) -> tuple[str, str, float, int]:
-    """An entity tag and a last-modified date for a file on disk.
+def _validators(path: Path) -> tuple[str, str, int]:
+    """An entity tag, a last-modified date, and the size of a file on disk.
 
-    Derived from size and mtime rather than a hash of the contents: these files run to
-    hundreds of megabytes, and the question being answered is only "is this the same file
-    I was reading a moment ago", which size and mtime settle.
+    The tag is derived from size and mtime rather than a hash of the contents: these files
+    run to hundreds of megabytes, and it exists so a cache can revalidate, not so anything
+    here can compare it.
     """
     stat = path.stat()
-    etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
-    return etag, formatdate(stat.st_mtime, usegmt=True), stat.st_mtime, stat.st_size
-
-
-def _range_still_applies(header: str | None, etag: str, mtime: float) -> bool:
-    """Whether an If-Range condition still holds, per RFC 9110.
-
-    This is the whole point of the header, and this server needs it more than most: the
-    file behind an episode is replaced when trimming finishes, and the replacement is a
-    third shorter with an entirely different byte-to-time mapping. A player that started
-    on the original and asks for a later range holds offsets that mean nothing in the new
-    file -- so it lands past the end, decides the media is over, and stops mid-episode.
-
-    Answering such a request with 200 and the whole new file is what the header is for:
-    the player throws away what it had and resynchronises.
-    """
-    if not header:
-        return True
-    candidate = header.strip()
-    if candidate.startswith(("W/", '"')):
-        # Weak tags never validate a range; only a strong, exact match does.
-        return candidate == etag
-    try:
-        return int(parsedate_to_datetime(candidate).timestamp()) == int(mtime)
-    except (TypeError, ValueError):
-        return False
+    return (
+        f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"',
+        formatdate(stat.st_mtime, usegmt=True),
+        stat.st_size,
+    )
 
 
 def _serve_local(path: Path, request: Request, media_type: str) -> Response:
-    etag, last_modified, mtime, size = _validators(path)
-    # Validators on every response, including the 206s. Without them a client has no way
-    # to notice the bytes it is reading now came from a different file than the bytes it
-    # read a minute ago, and no way to ask us to check.
+    etag, last_modified, size = _validators(path)
+    # Validators on the 206s as well as the 200s, which is what RFC 9110 asks for and what
+    # lets a cache revalidate a partial response instead of refetching it.
     headers = {
         "Accept-Ranges": "bytes",
         "ETag": etag,
         "Last-Modified": last_modified,
     }
 
-    byte_range = (
-        parse_range(request.headers.get("range"), size)
-        if _range_still_applies(request.headers.get("if-range"), etag, mtime)
-        else None
-    )
+    byte_range = parse_range(request.headers.get("range"), size)
 
     if byte_range is None:
         return FileResponse(
