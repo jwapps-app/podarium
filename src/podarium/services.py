@@ -17,6 +17,7 @@ from podarium.models import (
     FeedState,
     JobSource,
     JobState,
+    QueueItem,
     RetentionMode,
     User,
 )
@@ -64,6 +65,53 @@ async def feed_counts(
         )
     ).all()
     return {feed_id: (total, unplayed, new) for feed_id, total, unplayed, new in rows}
+
+
+async def compact_queue_positions(session: AsyncSession, user_id: int) -> None:
+    """Renumber a queue 0..n-1, so positions stay dense after anything is removed."""
+    items = (
+        await session.execute(
+            select(QueueItem)
+            .where(QueueItem.user_id == user_id)
+            .order_by(QueueItem.position, QueueItem.id)
+        )
+    ).scalars().all()
+    for index, item in enumerate(items):
+        if item.position != index:
+            item.position = index
+
+
+async def drop_from_queue(
+    session: AsyncSession, user_id: int, episode_ids: list[int]
+) -> int:
+    """Take episodes out of the queue. Returns how many were actually in it.
+
+    Called when an episode becomes played, which is the point at which it stops being
+    something to play next -- whether that came from listening to the end or from marking
+    it played to get rid of it. A queue that keeps finished episodes is a history, and
+    there is already a history.
+
+    Not the reverse: marking something unplayed does not put it back. Re-queueing is a
+    deliberate act, and guessing at it would resurrect episodes people cleared on purpose.
+    """
+    if not episode_ids:
+        return 0
+
+    items = (
+        await session.execute(
+            select(QueueItem)
+            .where(QueueItem.user_id == user_id)
+            .where(QueueItem.episode_id.in_(episode_ids))
+        )
+    ).scalars().all()
+    if not items:
+        return 0
+
+    for item in items:
+        await session.delete(item)
+    await session.flush()
+    await compact_queue_positions(session, user_id)
+    return len(items)
 
 
 async def unseen_episode_count(session: AsyncSession, user_id: int) -> int:

@@ -14,6 +14,7 @@ from podarium.jobs.retention import purge_episode
 from podarium.models import DeletedFeed, Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import FeedCreateRequest, FeedOut, FeedUpdateRequest, feed_out
 from podarium.services import (
+    drop_from_queue,
     feed_counts,
     get_app_settings,
     mark_all_feeds_seen,
@@ -313,6 +314,7 @@ async def mark_all_played(
         existing = {state.episode_id: state for state in rows}
 
     now = datetime.now(UTC)
+    changed: list[int] = []
     for episode_id in episode_ids:
         state = existing.get(episode_id)
         if state is None:
@@ -327,6 +329,12 @@ async def mark_all_played(
         # flag here exactly as it does for a single episode.
         state.completed_at = now if played else None
         state.played = played
+        changed.append(episode_id)
+
+    # Clearing a show's backlog should clear it out of the queue too, on the same
+    # reasoning as a single episode: what is played is not what plays next.
+    if played and changed:
+        await drop_from_queue(session, user.id, changed)
 
     # Marking the backlog played is also a way of saying you have looked at the show.
     await mark_feed_seen(session, user.id, feed.id)

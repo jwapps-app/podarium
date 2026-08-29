@@ -20,7 +20,7 @@ from podarium.schemas import (
     TranscriptOut,
     episode_out,
 )
-from podarium.services import enqueue_download, get_app_settings
+from podarium.services import drop_from_queue, enqueue_download, get_app_settings
 from podarium.transcripts import ensure_transcript
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
@@ -350,6 +350,10 @@ async def update_state(
         # the transition into played and cleared on the way back out.
         if body.played and not state.played:
             state.completed_at = datetime.now(UTC)
+            # Finished, so it is no longer something to play next. The queue advancing to
+            # the following episode is a separate thing the player does; this is what stops
+            # the one just heard from sitting there afterwards.
+            await drop_from_queue(session, user.id, [episode.id])
         elif not body.played:
             state.completed_at = None
         state.played = body.played

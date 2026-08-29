@@ -7,7 +7,7 @@ from podarium.auth import current_user
 from podarium.db import get_session
 from podarium.models import Episode, EpisodeState, JobSource, QueueItem, User
 from podarium.schemas import QueueAddRequest, QueueItemOut, QueueOrderRequest, episode_out
-from podarium.services import enqueue_download
+from podarium.services import compact_queue_positions, enqueue_download
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
@@ -32,19 +32,6 @@ async def _load_queue(session: AsyncSession, user_id: int) -> list[QueueItemOut]
         )
         for item, episode, episode_state in rows
     ]
-
-
-async def _compact_positions(session: AsyncSession, user_id: int) -> None:
-    items = (
-        await session.execute(
-            select(QueueItem)
-            .where(QueueItem.user_id == user_id)
-            .order_by(QueueItem.position, QueueItem.id)
-        )
-    ).scalars().all()
-    for index, item in enumerate(items):
-        if item.position != index:
-            item.position = index
 
 
 @router.get("", response_model=list[QueueItemOut])
@@ -94,7 +81,7 @@ async def add_to_queue(
                 item.position += 1
         session.add(QueueItem(user_id=user.id, episode_id=episode.id, position=position))
         await session.flush()
-        await _compact_positions(session, user.id)
+        await compact_queue_positions(session, user.id)
 
     await enqueue_download(session, episode, JobSource.queue)
     await session.commit()
@@ -148,6 +135,6 @@ async def remove_from_queue(
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Episode is not in the queue")
     await session.delete(item)
     await session.flush()
-    await _compact_positions(session, user.id)
+    await compact_queue_positions(session, user.id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

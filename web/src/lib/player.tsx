@@ -208,6 +208,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           if (options.played === undefined && !options.force) return;
           queryClient.invalidateQueries({ queryKey: ["episodes"] });
           queryClient.invalidateQueries({ queryKey: ["feeds"] });
+          // The server takes a played episode out of the queue, so the cached queue is
+          // wrong the moment one finishes. Safe to do here: this runs after the write has
+          // returned, and the handover to the next episode has already read the old list
+          // synchronously by then -- so the refetch cannot pull the queue out from under
+          // the advance.
+          queryClient.invalidateQueries({ queryKey: ["queue"] });
         })
         .catch((cause) => console.error("could not save playback position", cause));
     },
