@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from podarium.auth import current_user
 from podarium.main import app
-from podarium.models import Episode, Feed, QueueItem
+from podarium.models import Episode, EpisodeState, Feed, QueueItem
 from podarium.services import drop_from_queue
 
 
@@ -144,3 +144,82 @@ class TestMarkingPlayedClearsIt:
         remaining = await client.get("/api/queue")
         ids = [item["episode_id"] for item in remaining.json()]
         assert ids == [episodes[1].id, episodes[2].id]
+
+
+class TestAlreadyPlayedStillLeaves:
+    """Keyed off "played is now true", not off the transition into it.
+
+    An episode played once, queued again, and finished again is still finished. Keying
+    off the transition left that case in the queue for good, which from the outside is
+    indistinguishable from the feature not working at all.
+    """
+
+    async def test_finishing_an_already_played_episode_still_dequeues_it(
+        self, client, session, user
+    ):
+        _, episodes = await a_queue(session, user, 2)
+        # Played before it was ever queued -- so there is no transition left to key off.
+        session.add(
+            EpisodeState(user_id=user.id, episode_id=episodes[0].id, played=True)
+        )
+        await session.commit()
+
+        await client.put(f"/api/episodes/{episodes[0].id}/state", json={"played": True})
+
+        assert await queue_ids(session, user) == [episodes[1].id]
+
+
+class TestTheBackfill:
+    """The migration that clears queues of what was finished before any of this existed.
+
+    Exercised through the same SQL the migration runs, because that backlog is the whole
+    of what anyone currently has in their queue -- the per-request rule only stops it
+    growing.
+    """
+
+    async def test_it_removes_played_episodes_and_renumbers_the_rest(
+        self, session, user
+    ):
+        import re
+
+        from sqlalchemy import text
+
+        _, episodes = await a_queue(session, user, 4)
+        # The first and third were finished long before the rule existed.
+        for index in (0, 2):
+            session.add(
+                EpisodeState(user_id=user.id, episode_id=episodes[index].id, played=True)
+            )
+        await session.commit()
+
+        src = open(
+            "alembic/versions/f4b8c21e6a07_clear_played_episodes_from_queues.py"
+        ).read()
+        for statement in re.findall(r'op\.execute\(\s*"""(.*?)"""', src, re.S):
+            await session.execute(text(statement))
+        await session.commit()
+
+        assert await queue_ids(session, user) == [episodes[1].id, episodes[3].id]
+
+        rows = (
+            await session.execute(
+                select(QueueItem).where(QueueItem.user_id == user.id)
+                .order_by(QueueItem.position)
+            )
+        ).scalars().all()
+        assert [row.position for row in rows] == [0, 1]
+
+    async def test_it_leaves_unplayed_queues_alone(self, session, user):
+        import re
+
+        from sqlalchemy import text
+
+        _, episodes = await a_queue(session, user, 3)
+        src = open(
+            "alembic/versions/f4b8c21e6a07_clear_played_episodes_from_queues.py"
+        ).read()
+        for statement in re.findall(r'op\.execute\(\s*"""(.*?)"""', src, re.S):
+            await session.execute(text(statement))
+        await session.commit()
+
+        assert await queue_ids(session, user) == [e.id for e in episodes]

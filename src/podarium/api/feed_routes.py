@@ -324,6 +324,11 @@ async def mark_all_played(
             state = EpisodeState(user_id=user.id, episode_id=episode_id)
             session.add(state)
         if state.played == played:
+            # Already in the wanted state, so nothing to write -- but if it is played and
+            # still in the queue, it should not be. Cheap to include, and it means the
+            # bulk action clears the queue of a show's backlog completely.
+            if played:
+                changed.append(episode_id)
             continue
         # completed_at is what after_played retention measures from, so it moves with the
         # flag here exactly as it does for a single episode.

@@ -350,13 +350,18 @@ async def update_state(
         # the transition into played and cleared on the way back out.
         if body.played and not state.played:
             state.completed_at = datetime.now(UTC)
-            # Finished, so it is no longer something to play next. The queue advancing to
-            # the following episode is a separate thing the player does; this is what stops
-            # the one just heard from sitting there afterwards.
-            await drop_from_queue(session, user.id, [episode.id])
         elif not body.played:
             state.completed_at = None
         state.played = body.played
+
+        # Finished, so it is no longer something to play next. Keyed off "played is now
+        # true" rather than off the transition into it: an episode that was played once,
+        # queued again and finished again is still finished, and leaving that one case
+        # behind is the kind of exception nobody can predict from the outside. The queue
+        # advancing to the following episode is a separate thing the player does; this is
+        # what stops the one just heard from sitting there afterwards.
+        if body.played:
+            await drop_from_queue(session, user.id, [episode.id])
     if body.position_seconds is not None:
         state.position_seconds = body.position_seconds
         # A position write is the one signal that means "was listening": the player sends
