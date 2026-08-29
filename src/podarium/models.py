@@ -80,6 +80,11 @@ class User(Base):
     # The last 30-second step accepted, so a code cannot be used twice inside its window.
     totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
 
+    # When the inbox was last looked at, which is what the home-screen badge counts from.
+    # Separate from FeedState.last_seen_at on purpose: opening the inbox should clear the
+    # badge without also clearing the new marker on every show you did not open.
+    inbox_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
 
 class ApiToken(Base):
     """Long-lived bearer tokens for non-browser clients (the iOS app).

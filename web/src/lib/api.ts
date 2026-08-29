@@ -248,6 +248,12 @@ export const api = {
 
   stats: () => request<Stats>("/api/stats"),
 
+  // -- home-screen badge --------------------------------------------------------
+  badge: () => request<{ count: number }>("/api/badge"),
+
+  markInboxSeen: () =>
+    request<{ count: number }>("/api/badge/seen", { method: "POST" }),
+
   // -- bookmarks ---------------------------------------------------------------
   bookmarks: (episodeId?: number) =>
     request<Bookmark[]>(`/api/bookmarks${episodeId ? `?episode_id=${episodeId}` : ""}`),

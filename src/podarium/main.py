@@ -22,6 +22,7 @@ from podarium import __version__
 from podarium.api import (
     admin_routes,
     auth_routes,
+    badge_routes,
     bookmark_routes,
     episode_routes,
     feed_routes,
@@ -185,6 +186,7 @@ async def validation_exception_handler(_: Request, exc: RequestValidationError) 
 for module in (
     admin_routes,
     auth_routes,
+    badge_routes,
     search_routes,
     feed_routes,
     episode_routes,

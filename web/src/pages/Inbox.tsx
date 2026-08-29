@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { EpisodeRow } from "../components/EpisodeRow";
 import { Empty, ErrorNotice, Loading } from "../components/Loading";
+import { clearBadge } from "../lib/badge";
 import { useDebounced } from "../lib/debounce";
 import { isNewArrival } from "../lib/newness";
 import { useEpisodes, useFeedActions, useFeeds, useQueue } from "../lib/queries";
@@ -16,6 +17,18 @@ const FILTERS: { key: Filter; label: string }[] = [
 ];
 
 export function InboxPage() {
+  // Looking at the inbox is what clears the icon. Also on returning to it from another
+  // tab or another app, because a push may have arrived while this page sat open behind
+  // the lock screen -- coming back to it counts as looking at it.
+  useEffect(() => {
+    void clearBadge();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void clearBadge();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, []);
+
   const [filter, setFilter] = useState<Filter>("unplayed");
   const [query, setQuery] = useState("");
   const search = useDebounced(query, 250);

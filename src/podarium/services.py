@@ -18,6 +18,7 @@ from podarium.models import (
     JobSource,
     JobState,
     RetentionMode,
+    User,
 )
 
 
@@ -63,6 +64,44 @@ async def feed_counts(
         )
     ).all()
     return {feed_id: (total, unplayed, new) for feed_id, total, unplayed, new in rows}
+
+
+async def unseen_episode_count(session: AsyncSession, user_id: int) -> int:
+    """How many episodes have arrived since the inbox was last looked at.
+
+    The number on the home-screen icon. Same rule as the per-show "new" count in
+    ``feed_counts`` -- first seen since a marker, and not already played -- against the
+    inbox's own marker rather than each show's, so glancing at the inbox does not clear the
+    new marker on shows that were never opened.
+
+    Falls back to the account's creation date, which is the right answer for an account
+    that has never opened the inbox and, for one made before this column existed, is what
+    the migration stamps past.
+    """
+    seen_at = func.coalesce(User.inbox_seen_at, User.created_at)
+
+    return (
+        await session.execute(
+            select(func.count(Episode.id))
+            .select_from(Episode)
+            .join(Feed, Feed.id == Episode.feed_id)
+            .join(User, User.id == user_id)
+            .outerjoin(
+                EpisodeState,
+                (EpisodeState.episode_id == Episode.id) & (EpisodeState.user_id == user_id),
+            )
+            .where(Feed.active.is_(True))
+            .where(Episode.first_seen_at > seen_at)
+            .where(func.coalesce(EpisodeState.played, False).is_(False))
+        )
+    ).scalar_one()
+
+
+async def mark_inbox_seen(session: AsyncSession, user_id: int) -> None:
+    """Clear the badge. Called when the inbox is actually on screen."""
+    user = await session.get(User, user_id)
+    if user is not None:
+        user.inbox_seen_at = datetime.now(UTC)
 
 
 async def mark_feed_seen(session: AsyncSession, user_id: int, feed_id: int) -> FeedState:

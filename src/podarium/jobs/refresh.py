@@ -43,6 +43,7 @@ from podarium.services import (
     effective_retention,
     enqueue_download,
     get_app_settings,
+    unseen_episode_count,
 )
 
 log = logging.getLogger(__name__)
@@ -445,7 +446,18 @@ async def _notify_new_episodes(
     try:
         users = (await session.execute(select(User))).scalars().all()
         for user in users:
-            await push.send_to_all(session, user.id, payload, user_agent=user_agent)
+            # The badge is per-user and cumulative, where the message is about this pass:
+            # two arrivals now, on top of five never looked at, is a badge of seven and a
+            # notification that says two. Carried in the push because a closed app has no
+            # other way to learn the number -- there is no background execution to poll
+            # from, so whatever the last push said is what the icon shows until it is
+            # opened.
+            await push.send_to_all(
+                session,
+                user.id,
+                {**payload, "badge": await unseen_episode_count(session, user.id)},
+                user_agent=user_agent,
+            )
     except Exception:  # noqa: BLE001 - notification is not worth failing a refresh over
         log.exception("could not send new-episode notifications")
 

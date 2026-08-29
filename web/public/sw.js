@@ -232,6 +232,19 @@ self.addEventListener("push", (event) => {
   } catch {
     payload = {};
   }
+  // The count on the icon, which is the part that survives the notification being
+  // dismissed. Carried in the payload rather than counted here: a worker that incremented
+  // its own tally would drift the first time a message was dropped, and has no way to find
+  // the true figure again. Guarded because badging is a recent addition and absent in
+  // browsers -- and, on iOS, in anything that is not an installed home-screen app.
+  if (typeof payload.badge === "number" && self.navigator && self.navigator.setAppBadge) {
+    event.waitUntil(
+      payload.badge > 0
+        ? self.navigator.setAppBadge(payload.badge).catch(function () {})
+        : self.navigator.clearAppBadge().catch(function () {}),
+    );
+  }
+
   event.waitUntil(
     self.registration.showNotification(payload.title || "Podarium", {
       body: payload.body || "",
