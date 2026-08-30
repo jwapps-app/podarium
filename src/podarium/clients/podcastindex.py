@@ -175,16 +175,28 @@ async def podcast_by_feed_id(podcast_index_id: int, *, user_agent: str) -> Podca
 
 
 async def trending(
-    *, user_agent: str, limit: int = 30, category: str | None = None
+    *,
+    user_agent: str,
+    limit: int = 30,
+    category: str | None = None,
+    languages: list[str] | None = None,
 ) -> list[PodcastIndexFeed]:
     """What is being talked about right now, optionally within one category.
 
     Discovery without a search term. Searching only finds what you can already name, which
     is the wrong tool for "show me something I do not know about".
+
+    ``languages`` are matched exactly by the index, not by prefix, and a feed declares one
+    of "en", "en-US" or "en-us" more or less at the publisher's whim. So the caller is
+    expected to pass every variant it wants: asking for "en" alone drops every en-US feed,
+    which on an American device is most of what was wanted. Matching is case-insensitive
+    at the index's end, so casing here does not matter.
     """
     params: dict = {"max": limit}
     if category:
         params["cat"] = category
+    if languages:
+        params["lang"] = ",".join(languages)
     payload = await _get("/podcasts/trending", params, user_agent)
     results = [_feed_from_payload(item) for item in payload.get("feeds") or []]
     return [r for r in results if r]

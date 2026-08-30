@@ -116,6 +116,23 @@ function query(params: Record<string, string | number | boolean | undefined>): s
   return rendered ? `?${rendered}` : "";
 }
 
+
+/** The device's languages, most-preferred first, as a comma-separated list.
+ *
+ *  `navigator.languages` is the ordered list from system settings; `language` is the
+ *  single best guess and the fallback where the list is missing. Capped, because the
+ *  server takes only the first few and a long list is a long URL for nothing.
+ */
+function preferredLanguages(): string {
+  if (typeof navigator === "undefined") return "";
+  const list = navigator.languages?.length
+    ? navigator.languages
+    : navigator.language
+      ? [navigator.language]
+      : [];
+  return list.slice(0, 4).join(",");
+}
+
 export const api = {
   // -- auth ---------------------------------------------------------------
   me: () => request<User>("/api/auth/me"),
@@ -268,8 +285,17 @@ export const api = {
     request<void>(`/api/bookmarks/${id}`, { method: "DELETE" }),
 
   // -- discovery ---------------------------------------------------------------
-  trending: (category?: string) =>
-    request<SearchResult[]>(`/api/search/trending${category ? `?category=${encodeURIComponent(category)}` : ""}`),
+  trending: (category?: string) => {
+    const query = new URLSearchParams();
+    if (category) query.set("category", category);
+    // Trending is global by default, and globally most podcasts are not in a language you
+    // read -- the unfiltered list comes back a third Russian, German and French. Sending
+    // what this device actually reads beats a fixed country: it follows the person.
+    const languages = preferredLanguages();
+    if (languages) query.set("lang", languages);
+    const suffix = query.toString();
+    return request<SearchResult[]>(`/api/search/trending${suffix ? `?${suffix}` : ""}`);
+  },
 
   categories: () => request<string[]>("/api/search/categories"),
 

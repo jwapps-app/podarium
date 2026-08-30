@@ -1,3 +1,5 @@
+import re
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
@@ -166,10 +168,47 @@ async def search_by_feed_url(
 PREVIEW_EPISODES = 20
 
 
+#: A BCP 47 tag as far as this needs to care: letters, then optional subtags.
+_LANG_TAG = re.compile(r"^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8}){0,2}$")
+
+#: Enough for a device that lists a regional tag, its base, and a second language.
+MAX_LANGUAGES = 6
+
+
+def parse_languages(raw: str | None) -> list[str]:
+    """Turn a client's language list into tags safe to forward.
+
+    This is user-controlled input that ends up in a request to another service, so it is
+    matched against a shape rather than trimmed and hoped for. Anything unrecognisable is
+    dropped rather than rejected: a device offering one odd tag among several should still
+    get the others, and the worst case is trending unfiltered, which is where it started.
+
+    Regional tags bring their base along -- "en-US" alone would drop every feed that
+    declares plain "en", which is most of them.
+    """
+    if not raw:
+        return []
+
+    tags: list[str] = []
+    for candidate in raw.split(","):
+        tag = candidate.strip()
+        if not _LANG_TAG.match(tag):
+            continue
+        for form in (tag, tag.split("-")[0]):
+            if form.lower() not in {t.lower() for t in tags}:
+                tags.append(form)
+    return tags[:MAX_LANGUAGES]
+
+
 @router.get("/trending", response_model=list[SearchResultOut])
 async def trending(
     category: str | None = Query(default=None),
     limit: int = Query(default=30, ge=1, le=100),
+    lang: str | None = Query(
+        default=None,
+        max_length=200,
+        description="Comma-separated BCP 47 tags, usually the browser's own list.",
+    ),
     _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[SearchResultOut]:
@@ -177,11 +216,19 @@ async def trending(
 
     Search only finds what you can already name. This is the other half of discovery, and
     it goes through Podcast Index like everything else here -- Apple is never consulted.
+
+    Trending is global unless told otherwise, and globally most podcasts are not in your
+    language: the unfiltered list comes back a third Russian, German and French. The client
+    sends the languages its device actually reads, which is a better answer than a fixed
+    country because it follows whoever is holding the phone.
     """
     app_settings = await get_app_settings(session)
     try:
         results = await podcastindex.trending(
-            user_agent=app_settings.user_agent, limit=limit, category=category
+            user_agent=app_settings.user_agent,
+            limit=limit,
+            category=category,
+            languages=parse_languages(lang),
         )
     except PodcastIndexUnavailable as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
