@@ -6,12 +6,12 @@ what this server keeps is a device token and the bundle it belongs to.
 
 import httpx
 import pytest
+from sqlalchemy import select
 
 from podarium.auth import current_user
 from podarium.clients import pushrelay
 from podarium.main import app
 from podarium.models import ApnsDevice
-from sqlalchemy import select
 
 
 @pytest.fixture
