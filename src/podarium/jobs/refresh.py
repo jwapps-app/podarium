@@ -460,14 +460,14 @@ async def _notify_new_episodes(
             )
             # And the phones, which do not speak Web Push. Same message, same badge,
             # different road: through the shared relay rather than a browser's push service.
-            await _notify_apns_devices(
+            await notify_apns_devices(
                 session, user.id, payload, badge=badge, user_agent=user_agent
             )
     except Exception:  # noqa: BLE001 - notification is not worth failing a refresh over
         log.exception("could not send new-episode notifications")
 
 
-async def _notify_apns_devices(
+async def notify_apns_devices(
     session: AsyncSession,
     user_id: int,
     payload: dict,

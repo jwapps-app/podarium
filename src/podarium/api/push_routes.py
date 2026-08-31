@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from podarium import push
 from podarium.auth import current_user
 from podarium.db import get_session
+from podarium.jobs.refresh import notify_apns_devices
 from podarium.models import ApnsDevice, PushSubscription, User
 from podarium.services import get_app_settings
 
@@ -189,10 +190,15 @@ async def send_test(
     is the whole diagnostic.
     """
     app_settings = await get_app_settings(session)
+    payload = {"title": "Podarium", "body": "Notifications are working.", "url": "/"}
+
     await push.send_to_all(
-        session,
-        user.id,
-        {"title": "Podarium", "body": "Notifications are working.", "url": "/"},
-        user_agent=app_settings.user_agent,
+        session, user.id, payload, user_agent=app_settings.user_agent
+    )
+    # And the phones. A test that reached only browsers was the one failure this button
+    # exists to rule out: it would light up on the desktop and prove nothing at all about
+    # the device actually in your hand.
+    await notify_apns_devices(
+        session, user.id, payload, badge=0, user_agent=app_settings.user_agent
     )
     return await config(user=user, session=session)

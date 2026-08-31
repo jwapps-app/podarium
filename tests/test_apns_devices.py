@@ -149,3 +149,50 @@ class TestTheRelayIsReachableOnALocalNetwork:
         async with build_client("Podarium/test") as client:
             with pytest.raises(httpx.RequestError, match="refusing to fetch"):
                 await client.get("http://127.0.0.1:1/")
+
+
+class TestTheTestButtonReachesPhones:
+    """"Send a test" exists to answer one question: does a device buzz.
+
+    It sent to browsers only, so on an account with a phone registered it would light up
+    the desktop and prove nothing about the device in your hand -- the exact failure the
+    button is there to rule out.
+    """
+
+    async def test_a_registered_phone_is_included(self, client, session, user, monkeypatch):
+        sent: list[dict] = []
+
+        async def capture(**kwargs):
+            sent.append(kwargs)
+            return True
+
+        monkeypatch.setattr(pushrelay, "configured", lambda: True)
+        monkeypatch.setattr(pushrelay, "send", capture)
+
+        await client.post(
+            "/api/push/device",
+            json={"device_token": "phone-token", "bundle_id": "com.jworthington.podarium"},
+        )
+        await client.post("/api/push/test")
+
+        assert [item["device_token"] for item in sent] == ["phone-token"]
+
+    async def test_nothing_is_sent_when_no_relay_is_configured(
+        self, client, session, user, monkeypatch
+    ):
+        sent: list[dict] = []
+
+        async def capture(**kwargs):
+            sent.append(kwargs)
+            return True
+
+        monkeypatch.setattr(pushrelay, "configured", lambda: False)
+        monkeypatch.setattr(pushrelay, "send", capture)
+
+        await client.post(
+            "/api/push/device",
+            json={"device_token": "phone-token", "bundle_id": "com.jworthington.podarium"},
+        )
+        await client.post("/api/push/test")
+
+        assert sent == []
