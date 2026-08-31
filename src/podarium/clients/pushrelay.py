@@ -51,11 +51,13 @@ async def send(
     if sandbox:
         payload["sandbox"] = True
 
-    # Through the shared client, which is where every outbound request is built. The
-    # private-address guard rides along: the relay is operator-configured rather than
-    # publisher-supplied, so a relay on a LAN address needs ALLOW_PRIVATE_FETCH, the same
-    # switch a LAN feed would need.
-    async with build_client(user_agent) as client:
+    # Through the shared client, as every outbound request is -- but without the
+    # private-address guard. That guard is there so a hostile feed cannot make this server
+    # probe its own network; the relay's address comes from this deployment's own
+    # configuration, and self-hosted infrastructure sits on a private address as a matter
+    # of course. The alternative was ALLOW_PRIVATE_FETCH, which would also have dropped
+    # the guard for every publisher feed.
+    async with build_client(user_agent, guard_private=False) as client:
         response = await client.post(
             f"{settings.push_relay_url.rstrip('/')}/notify",
             json=payload,

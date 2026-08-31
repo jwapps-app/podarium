@@ -294,7 +294,7 @@ services:
 # the shared push relay, which holds the single Apple key for every app on this developer
 # account -- so no .p8, no Key ID, and no Team ID belongs on this host.
 #
-#     PUSH_RELAY_URL      https://push.jjrrr.co
+#     PUSH_RELAY_URL      where the relay listens, e.g. http://192.168.1.11:8088
 #     PUSH_RELAY_KEY      the key issued to com.jworthington.podarium
 #
 # Both, or the iOS half stays off. The key is per-bundle at the relay's end: it authorises
@@ -307,6 +307,11 @@ services:
 #   2. A line for that bundle exists in apps.keys on the NAS beside the relay's .p8, and
 #      the relay has been restarted -- it reads that file once, at startup.
 #   3. These two variables are set here.
+#
+# A relay on a private address is fine and does not need ALLOW_PRIVATE_FETCH. The outbound
+# guard exists so a hostile feed cannot make this server probe its own network; the relay's
+# address comes from this file, which is the opposite case, so it is exempted at the one
+# call site rather than by dropping the guard for every publisher feed.
 #
 # Sandbox versus production is decided per device, not here. A debug build run from Xcode
 # registers a sandbox token and says so; the relay routes that request to Apple's sandbox

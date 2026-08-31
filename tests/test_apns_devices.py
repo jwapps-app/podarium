@@ -100,3 +100,52 @@ class TestRelayConfiguration:
         monkeypatch.setattr(settings, "push_relay_url", "https://push.example.com")
         monkeypatch.setattr(settings, "push_relay_key", None)
         assert pushrelay.configured() is False
+
+
+class TestTheRelayIsReachableOnALocalNetwork:
+    """A self-hosted relay lives on a private address, and must still be reachable.
+
+    The outbound guard exists so a hostile feed cannot make this server probe the network
+    it sits on. A relay whose address came from this deployment's own configuration is the
+    opposite case, and turning the guard off globally to reach it would drop it for every
+    publisher feed as well.
+
+    Both tests force the guard on regardless of the environment: development sets
+    ALLOW_PRIVATE_FETCH so it can talk to a database on localhost, and without pinning it
+    here these would pass by doing nothing.
+    """
+
+    @pytest.fixture(autouse=True)
+    def guard_on(self, monkeypatch):
+        from podarium import config
+
+        monkeypatch.setattr(config.get_settings(), "allow_private_fetch", False)
+
+    async def test_a_publisher_on_the_lan_is_still_refused(self):
+        import httpx
+
+        from podarium.clients.http import build_client
+
+        async with build_client("Podarium/test") as client:
+            with pytest.raises(httpx.RequestError, match="refusing to fetch"):
+                await client.get("http://192.168.1.11:8088/notify")
+
+    async def test_the_relay_client_is_allowed_through(self):
+        # Port 1 on loopback: nothing listens, so this refuses at once. The point is only
+        # that the refusal comes from the network rather than from the guard.
+        import httpx
+
+        from podarium.clients.http import build_client
+
+        async with build_client("Podarium/test", guard_private=False) as client:
+            with pytest.raises(httpx.ConnectError):
+                await client.get("http://127.0.0.1:1/nothing-listens-here")
+
+    async def test_loopback_is_refused_for_a_publisher_too(self):
+        import httpx
+
+        from podarium.clients.http import build_client
+
+        async with build_client("Podarium/test") as client:
+            with pytest.raises(httpx.RequestError, match="refusing to fetch"):
+                await client.get("http://127.0.0.1:1/")
