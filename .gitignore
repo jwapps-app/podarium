@@ -13,7 +13,6 @@ web/dist/
 # lock, so a committed lock would be a file nothing actually enforces.
 uv.lock
 
-# Editor and assistant tooling, local to whoever is working on this.
-.claude/
+# Editor settings, which belong to whoever is working on this rather than to the project.
 .vscode/
 .idea/
