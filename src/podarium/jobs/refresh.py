@@ -482,13 +482,22 @@ async def notify_apns_devices(
     keeping the row means failing on it every refresh for ever.
     """
     if not pushrelay.configured():
+        # Said out loud. A silent return here is indistinguishable from a successful send,
+        # which is how "the test only reached the browser" becomes a mystery instead of a
+        # missing environment variable.
+        log.info(
+            "push relay is not configured; %s has no way to notify an iPhone", __name__
+        )
         return
 
     devices = (
         await session.execute(select(ApnsDevice).where(ApnsDevice.user_id == user_id))
     ).scalars().all()
     if not devices:
+        log.info("no iPhone is registered for user %s", user_id)
         return
+
+    log.info("notifying %s registered device(s) through the relay", len(devices))
 
     now = datetime.now(UTC)
     dead: list[ApnsDevice] = []

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium import push
 from podarium.auth import current_user
+from podarium.clients import pushrelay
 from podarium.db import get_session
 from podarium.jobs.refresh import notify_apns_devices
 from podarium.models import ApnsDevice, PushSubscription, User
@@ -19,6 +20,11 @@ class PushConfigOut(BaseModel):
     # None means the server has no VAPID keys, so the client should not offer to subscribe.
     public_key: str | None
     subscribed: bool
+    # The iOS half, reported separately because it fails separately. Without these, a test
+    # that reaches a browser and not a phone is indistinguishable from one that reached
+    # everything -- which is precisely the state this endpoint should be able to explain.
+    relay_configured: bool = False
+    apns_devices: int = 0
 
 
 class PushSubscribeRequest(BaseModel):
@@ -58,7 +64,19 @@ async def config(
             )
         ).scalars().all()
     )
-    return PushConfigOut(public_key=push.public_key(), subscribed=count > 0)
+    devices = len(
+        (
+            await session.execute(
+                select(ApnsDevice.id).where(ApnsDevice.user_id == user.id)
+            )
+        ).scalars().all()
+    )
+    return PushConfigOut(
+        public_key=push.public_key(),
+        subscribed=count > 0,
+        relay_configured=pushrelay.configured(),
+        apns_devices=devices,
+    )
 
 
 @router.post("", response_model=PushDeviceOut, status_code=status.HTTP_201_CREATED)
