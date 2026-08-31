@@ -1,18 +1,41 @@
 # Podarium
 
-A self-hosted podcast server and player. Replaces PinePods.
+A podcast server you run yourself. It subscribes to your shows, downloads the audio,
+and serves it to your own players — a web app that installs to a phone's home screen,
+and an HTTP API.
 
-The full design lives in [podarium-spec.md](podarium-spec.md). Three requirements drive
-everything here:
+Most podcast apps are a directory with a player attached: your device fetches each
+episode straight from the publisher, and Apple's catalogue decides what exists.
+Podarium inverts that. Three rules shape everything else:
 
-1. **The server does all fetching.** Publishers see one IP address — the server's. No
-   client ever requests anything from a publisher host.
-2. **Apple is not in the loop.** Discovery goes through Podcast Index, never iTunes.
-3. **It is a media server, not a sync service.** It stores audio, serves it with range
-   requests, and manages retention.
+1. **The server does every fetch.** Feeds, audio, and artwork are all pulled by the
+   server and served from it. Publishers see one address, and no client ever makes a
+   request to a host you did not choose.
+2. **Apple is never in the loop.** Discovery runs through
+   [Podcast Index](https://podcastindex.org), never iTunes.
+3. **It is a media server, not a sync service.** It holds the files, serves them with
+   range requests, and decides what to keep.
 
-Phases 1 and 2 are done: the server with its HTTP API, and the web UI that runs entirely
-against that public API. iOS is phase 3 and will use the same contract.
+## What it does
+
+- Subscribe by search, by category, by what is trending, or by pasting a feed URL
+- Downloads episodes ahead of time, with retention rules per show or globally
+- Queue, inbox with filters, starred episodes, and a resume list
+- Playback speed per show, chapter skip, and skipping of publisher-marked ad breaks
+- Configurable intro and outro trimming per show, and a sleep timer
+- Removes silence and levels loudness on the server, so no client repeats the work
+- Fetches transcripts where publishers offer them, and searches your library by what
+  was said rather than only by title
+- Bookmarks a timestamp inside an episode, which is the thing hardest to find again
+- Listening statistics measured from audio that actually played, not from what was
+  marked as done
+- Web push for new episodes, with a count on the home-screen icon
+- Offline playback for episodes you save to the device
+- OPML in and out, Prometheus metrics, and a nightly database dump
+
+The server and the web app are complete and in daily use. A native iOS client is in
+progress against the same API. The reasoning behind the design is in
+[podarium-spec.md](podarium-spec.md).
 
 ## Local development
 
