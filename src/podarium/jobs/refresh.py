@@ -28,7 +28,9 @@ from podarium.db import get_sessionmaker
 from podarium.jobs.artwork import ensure_feed_artwork
 from podarium.metrics import episodes_discovered_total, feed_refresh_total
 from podarium.jobs.retention import purge_episode
+from podarium.clients import pushrelay
 from podarium.models import (
+    ApnsDevice,
     DownloadJob,
     Episode,
     EpisodeState,
@@ -452,14 +454,62 @@ async def _notify_new_episodes(
             # other way to learn the number -- there is no background execution to poll
             # from, so whatever the last push said is what the icon shows until it is
             # opened.
+            badge = await unseen_episode_count(session, user.id)
             await push.send_to_all(
-                session,
-                user.id,
-                {**payload, "badge": await unseen_episode_count(session, user.id)},
-                user_agent=user_agent,
+                session, user.id, {**payload, "badge": badge}, user_agent=user_agent
+            )
+            # And the phones, which do not speak Web Push. Same message, same badge,
+            # different road: through the shared relay rather than a browser's push service.
+            await _notify_apns_devices(
+                session, user.id, payload, badge=badge, user_agent=user_agent
             )
     except Exception:  # noqa: BLE001 - notification is not worth failing a refresh over
         log.exception("could not send new-episode notifications")
+
+
+async def _notify_apns_devices(
+    session: AsyncSession,
+    user_id: int,
+    payload: dict,
+    *,
+    badge: int,
+    user_agent: str,
+) -> None:
+    """Send to this user's iPhones through the relay.
+
+    A device the relay rejects outright is forgotten, the same way a dead Web Push
+    subscription is: an uninstalled app or a revoked token will never work again, and
+    keeping the row means failing on it every refresh for ever.
+    """
+    if not pushrelay.configured():
+        return
+
+    devices = (
+        await session.execute(select(ApnsDevice).where(ApnsDevice.user_id == user_id))
+    ).scalars().all()
+    if not devices:
+        return
+
+    now = datetime.now(UTC)
+    dead: list[ApnsDevice] = []
+    for device in devices:
+        accepted = await pushrelay.send(
+            device_token=device.device_token,
+            bundle_id=device.bundle_id,
+            title=payload["title"],
+            body=payload["body"],
+            badge=badge,
+            sandbox=device.sandbox,
+            user_agent=user_agent,
+        )
+        if accepted:
+            device.last_used_at = now
+        else:
+            dead.append(device)
+
+    for device in dead:
+        await session.delete(device)
+    await session.commit()
 
 
 async def refresh_loop(stop: asyncio.Event, tick_seconds: int = 60) -> None:

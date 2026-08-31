@@ -426,6 +426,32 @@ class PushSubscription(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class ApnsDevice(Base):
+    """An iPhone registered for notifications.
+
+    Separate from PushSubscription, which is a browser: the two have nothing in common
+    beyond intent. A web push subscription is an endpoint URL and a keypair agreed with a
+    push service; this is an APNs token and the bundle it was issued for, and it is
+    delivered through the shared relay rather than to Apple from here.
+    """
+
+    __tablename__ = "apns_devices"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Reissued by iOS on reinstall and occasionally otherwise, so the same phone can
+    # arrive under a new one; unique so re-registering updates rather than duplicates.
+    device_token: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    bundle_id: Mapped[str] = mapped_column(Text, nullable=False)
+    # Debug builds run from Xcode get sandbox tokens, which APNs rejects on the production
+    # host and vice versa. The device knows which it has; the relay needs telling.
+    sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = _now_col(nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class DeletedFeed(Base):
     """A tombstone, so a client can learn that a feed is gone.
 

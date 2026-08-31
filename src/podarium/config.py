@@ -40,6 +40,13 @@ class Settings(BaseSettings):
     # sender. mailto: or https:.
     vapid_contact: str = "mailto:admin@localhost"
 
+    # APNs for the iOS app, which does not go to Apple from here. It goes to the shared
+    # relay that holds the one Apple key for every app on this account, so all this server
+    # needs is where the relay is and a key scoped to Podarium's bundle. Absent means the
+    # iOS half is simply off, exactly as absent VAPID keys turn web push off.
+    push_relay_url: str | None = None
+    push_relay_key: str | None = None
+
     # First-boot bootstrap. Applied only when the users table is empty.
     podarium_username: str | None = None
     podarium_password: str | None = None

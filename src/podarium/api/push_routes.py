@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from podarium import push
 from podarium.auth import current_user
 from podarium.db import get_session
-from podarium.models import PushSubscription, User
+from podarium.models import ApnsDevice, PushSubscription, User
 from podarium.services import get_app_settings
 
 router = APIRouter(prefix="/api/push", tags=["push"])
@@ -31,6 +31,18 @@ class PushDeviceOut(BaseModel):
     id: int
     label: str | None
     created_at: str
+
+
+class ApnsDeviceRequest(BaseModel):
+    device_token: str
+    bundle_id: str
+    # Debug builds run from Xcode get sandbox tokens, which APNs rejects on the production
+    # host and the other way round. Only the device knows which it holds.
+    sandbox: bool = False
+
+
+class ApnsDeviceForget(BaseModel):
+    device_token: str
 
 
 @router.get("/config", response_model=PushConfigOut)
@@ -108,6 +120,58 @@ async def unsubscribe(
     if endpoint:
         statement = statement.where(PushSubscription.endpoint == endpoint)
     await session.execute(statement)
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/device", status_code=status.HTTP_204_NO_CONTENT)
+async def register_device(
+    body: ApnsDeviceRequest,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Register an iPhone for notifications.
+
+    Upserted on the token, because iOS reissues one on reinstall and occasionally
+    otherwise -- the same phone arriving under a new token should replace its old row, and
+    the same token arriving twice should not make two.
+    """
+    existing = (
+        await session.execute(
+            select(ApnsDevice).where(ApnsDevice.device_token == body.device_token)
+        )
+    ).scalar_one_or_none()
+
+    if existing is None:
+        session.add(
+            ApnsDevice(
+                user_id=user.id,
+                device_token=body.device_token,
+                bundle_id=body.bundle_id,
+                sandbox=body.sandbox,
+            )
+        )
+    else:
+        existing.user_id = user.id
+        existing.bundle_id = body.bundle_id
+        existing.sandbox = body.sandbox
+
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete("/device", status_code=status.HTTP_204_NO_CONTENT)
+async def forget_device(
+    body: ApnsDeviceForget,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Stop sending to a device -- signing out, or turning notifications off."""
+    await session.execute(
+        delete(ApnsDevice)
+        .where(ApnsDevice.device_token == body.device_token)
+        .where(ApnsDevice.user_id == user.id)
+    )
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
