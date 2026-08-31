@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from podarium.api.bookmark_routes import load_bookmarks
 from podarium.api.queue_routes import _load_queue
 from podarium.auth import current_user
 from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
@@ -106,8 +107,8 @@ async def sync(
     # would be pure overhead, and a client that restarts a paging run gets them again anyway.
     if cursor:
         return SyncOut(
-            now=now, feeds=[], episodes=episodes, queue=[], deleted_feed_ids=[],
-            next_cursor=next_cursor,
+            now=now, feeds=[], episodes=episodes, queue=[], bookmarks=[],
+            deleted_feed_ids=[], next_cursor=next_cursor,
         )
 
     feed_state = aliased(FeedState)
@@ -158,6 +159,7 @@ async def sync(
         ],
         episodes=episodes,
         queue=await _load_queue(session, user.id),
+        bookmarks=await load_bookmarks(session, user.id),
         deleted_feed_ids=list((await session.execute(deleted_statement)).scalars()),
         next_cursor=next_cursor,
     )

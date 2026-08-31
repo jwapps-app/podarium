@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from podarium.auth import current_user
 from podarium.db import get_session
 from podarium.models import Bookmark, Episode, User
+from podarium.schemas import BookmarkOut
 
 router = APIRouter(prefix="/api/bookmarks", tags=["bookmarks"])
 
@@ -29,17 +30,6 @@ class BookmarkUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
-class BookmarkOut(BaseModel):
-    id: int
-    episode_id: int
-    position_seconds: int
-    note: str | None
-    created_at: datetime
-    # Denormalised so a list of bookmarks reads without a request per episode.
-    episode_title: str | None = None
-    feed_id: int | None = None
-
-
 def _out(bookmark: Bookmark, episode: Episode | None = None) -> BookmarkOut:
     return BookmarkOut(
         id=bookmark.id,
@@ -50,6 +40,19 @@ def _out(bookmark: Bookmark, episode: Episode | None = None) -> BookmarkOut:
         episode_title=episode.title if episode else None,
         feed_id=episode.feed_id if episode else None,
     )
+
+
+async def load_bookmarks(session: AsyncSession, user_id: int) -> list[BookmarkOut]:
+    """Every bookmark this person has, newest first. Shared with /api/sync."""
+    rows = (
+        await session.execute(
+            select(Bookmark, Episode)
+            .join(Episode, Episode.id == Bookmark.episode_id)
+            .where(Bookmark.user_id == user_id)
+            .order_by(Bookmark.created_at.desc())
+        )
+    ).all()
+    return [_out(bookmark, episode) for bookmark, episode in rows]
 
 
 @router.get("", response_model=list[BookmarkOut])

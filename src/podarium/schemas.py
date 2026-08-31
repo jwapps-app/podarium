@@ -302,6 +302,17 @@ class SettingsUpdate(BaseModel):
     global_skip_sponsor_chapters: bool | None = None
 
 
+class BookmarkOut(BaseModel):
+    id: int
+    episode_id: int
+    position_seconds: int
+    note: str | None
+    created_at: datetime
+    # Denormalised so a list of bookmarks reads without a request per episode.
+    episode_title: str | None = None
+    feed_id: int | None = None
+
+
 class SyncOut(BaseModel):
     # Use this as the ``since`` on the next call -- but only once next_cursor is null.
     # Server-supplied so client clock skew cannot open a gap in the delta.
@@ -309,6 +320,11 @@ class SyncOut(BaseModel):
     feeds: list[FeedOut]
     episodes: list[EpisodeOut]
     queue: list[QueueItemOut]
+    # Sent whole rather than as a delta, like the queue and for the same reason: it is one
+    # person's list and it is small. Whole also sidesteps deletions -- a bookmark removed
+    # on another device leaves no row to carry an updated_at, so a delta keyed on one would
+    # never mention it and the client would keep it for ever.
+    bookmarks: list[BookmarkOut] = []
     deleted_feed_ids: list[int] = []
     # Non-null means this response was truncated. Call again with the same `since` and this
     # value as `cursor`; advancing `since` before the pages run out loses the remainder
