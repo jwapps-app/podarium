@@ -1,6 +1,6 @@
 name: build
 
-# Pushes a multi-architecture image to GHCR so the same tag runs on docker-audio (amd64),
+# Pushes a multi-architecture image to GHCR so the same tag runs on an amd64 server
 # a Pi, or an Apple Silicon Mac without anyone thinking about it.
 on:
   push:

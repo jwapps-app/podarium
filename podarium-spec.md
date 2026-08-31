@@ -48,7 +48,8 @@ Multi-user sharing, transcripts, chapter editing, video podcasts, recommendation
 
 ### Host
 
-`docker-audio` — 192.168.1.30, alongside Audiobookshelf, Vocalis, and (during migration) PinePods.
+A Debian VM on the home network, running alongside the other media containers and
+(during migration) PinePods. Referred to below as the Docker host.
 
 ### Storage split
 
@@ -56,7 +57,7 @@ Follows the established rule: small-and-valuable on NVMe, large-and-worthless on
 
 | Data | Location |
 |---|---|
-| Postgres | `/home/jworthington/docker/podarium/pgdata` (local NVMe) |
+| Postgres | `~/docker/podarium/pgdata` (local NVMe) |
 | Episode audio | `/mnt/nas/podarium/downloads` (NFS from 192.168.1.42) |
 | Artwork cache | `/mnt/nas/podarium/artwork` |
 | DB dumps | `/mnt/nas/podarium/backups` |
@@ -72,7 +73,7 @@ Audio is high-churn, incompressible, and has zero recovery value — it must not
 
 ### Port
 
-Pick an unused port on `docker-audio` (8040 is PinePods). `8044` is the suggested default; verify with `ss -tlnp` before deploying.
+Pick an unused port on the Docker host (8040 is PinePods here). `8044` is the suggested default; verify with `ss -tlnp` before deploying.
 
 ---
 

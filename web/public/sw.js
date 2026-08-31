@@ -2,7 +2,7 @@
  *
  * The design invariant is that the server does every fetch, which makes Podarium useless
  * the moment the phone cannot reach it -- a plane, a dead zone, home internet down. The
- * audio is on docker-audio, not in your pocket. This closes as much of that gap as a web
+ * audio is on the server, not in your pocket. This closes as much of that gap as a web
  * app can: the shell is cached so the app opens, and episodes you explicitly save are
  * stored whole so they play.
  *

@@ -12,3 +12,8 @@ web/dist/
 # uv writes this on sync, but the image installs from pyproject.toml rather than the
 # lock, so a committed lock would be a file nothing actually enforces.
 uv.lock
+
+# Editor and assistant tooling, local to whoever is working on this.
+.claude/
+.vscode/
+.idea/

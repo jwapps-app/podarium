@@ -1,6 +1,9 @@
-# Podarium — Portainer stack for docker-audio (192.168.1.30)
+# Podarium — Portainer stack
 #
 # Paste into the Portainer web editor. There is deliberately no compose file on the host.
+#
+# Replace YOUR_USER throughout with the account that owns the data directories, and check
+# the NFS server address under the downloads mount -- both are specific to your machine.
 #
 # ---------------------------------------------------------------------------------------
 # BEFORE DEPLOYING
@@ -11,8 +14,8 @@
 #     8040 is PinePods. If 8044 is taken, change the published port AND PUBLIC_URL below.
 #
 #  2. Create the data directories and give them to the uid the container runs as:
-#         sudo mkdir -p /home/jworthington/docker/podarium/{pgdata,downloads,artwork}
-#         sudo chown -R 1026:100 /home/jworthington/docker/podarium/{downloads,artwork}
+#         sudo mkdir -p /home/YOUR_USER/docker/podarium/{pgdata,downloads,artwork}
+#         sudo chown -R 1026:100 /home/YOUR_USER/docker/podarium/{downloads,artwork}
 #     pgdata is left alone -- the Postgres image manages its own ownership.
 #
 #  3. Set the variables in Portainer's "Environment variables" panel, below the editor.
@@ -53,7 +56,7 @@
 # The reason the spec put audio on the NAS still stands, though, and it is about backups
 # rather than disks: this is churning, incompressible, re-downloadable data that should not
 # enter vzdump or reach PBS. Exclude
-#     /home/jworthington/docker/podarium/downloads
+#     /home/YOUR_USER/docker/podarium/downloads
 # from the backup job once you have watched it for a while.
 #
 # Moving to the NAS later is a four-step job and needs no database change, because
@@ -74,7 +77,7 @@ services:
       PGDATA: /var/lib/pgdata/pgdata
     volumes:
       # Small, valuable, and the one thing here worth backing up.
-      - /home/jworthington/docker/podarium/pgdata:/var/lib/pgdata
+      - /home/YOUR_USER/docker/podarium/pgdata:/var/lib/pgdata
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U podarium"]
       interval: 10s
@@ -105,7 +108,7 @@ services:
       # How many nightly dumps to keep.
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
     volumes:
-      - /home/jworthington/docker/podarium/backups:/backups
+      - /home/YOUR_USER/docker/podarium/backups:/backups
     # No cron in this image and no reason to add one: dump, sleep, repeat. A restart runs a
     # dump immediately, which is what you want after touching the stack anyway.
     entrypoint:
@@ -199,8 +202,8 @@ services:
       RETENTION_SWEEP_MINUTES: "60"
     volumes:
       # --- audio and artwork: local NVMe -------------------------------------------------
-      - /home/jworthington/docker/podarium/downloads:/downloads
-      - /home/jworthington/docker/podarium/artwork:/artwork
+      - /home/YOUR_USER/docker/podarium/downloads:/downloads
+      - /home/YOUR_USER/docker/podarium/artwork:/artwork
       #
       # --- to move audio to the NAS later, comment the two lines above and use these -----
       # - /mnt/nas/podarium/downloads:/downloads
@@ -233,7 +236,7 @@ services:
 # ---------------------------------------------------------------------------------------
 #
 # Nothing to install. The backup service carries its own script, and Docker creates
-# /home/jworthington/docker/podarium/backups on first start if it is not already there.
+# /home/YOUR_USER/docker/podarium/backups on first start if it is not already there.
 #
 # Which build am I running?
 #     docker logs podarium-api 2>&1 | grep "starting, build"
@@ -242,13 +245,13 @@ services:
 # the running build.
 #
 # Check it ran:     docker logs podarium-backup
-#                   ls -lh /home/jworthington/docker/podarium/backups
+#                   ls -lh /home/YOUR_USER/docker/podarium/backups
 # Force one now:    docker restart podarium-backup
 #
 # Restore into a scratch database and compare before touching the live one:
 #
 #     docker exec podarium-db psql -U podarium -d podarium -c "create database restore_test"
-#     gunzip -c /home/jworthington/docker/podarium/backups/podarium-YYYYMMDD-HHMMSS.sql.gz \
+#     gunzip -c /home/YOUR_USER/docker/podarium/backups/podarium-YYYYMMDD-HHMMSS.sql.gz \
 #       | docker exec -i podarium-db psql -U podarium -d restore_test
 #
 # Restoring over the live database needs it empty first -- the dump recreates the tables,

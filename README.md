@@ -65,7 +65,7 @@ download, range request, purge, sync — against a running server.
 
 ## Deployment
 
-`deploy/portainer-stack.yml` is pasted into the Portainer web editor on `docker-audio`; no
+`deploy/portainer-stack.yml` is pasted into the Portainer web editor on the Docker host; no
 compose file lives on the host. Read the comments at the top of it before deploying — the
 port, the NFS mount options, and the `PGDATA` path all have specific gotchas carried over
 from PinePods.
@@ -123,7 +123,7 @@ crash-consistent rather than consistent: what you would have if the power went o
 Postgres normally replays its WAL and comes up clean from that, and "normally" is doing real
 work in that sentence.
 
-The stack therefore runs a nightly `pg_dump` into `/home/jworthington/docker/podarium/backups`,
+The stack therefore runs a nightly `pg_dump` into `/home/YOUR_USER/docker/podarium/backups`,
 inside the tree vzdump already picks up, so the backup holds both the raw directory and a
 logically consistent dump. The service carries its own script inline — there is nothing to
 place on the host, and `docker restart podarium-backup` forces a dump immediately.
