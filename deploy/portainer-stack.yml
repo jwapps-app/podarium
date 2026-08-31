@@ -30,6 +30,8 @@
 #         PODCASTINDEX_SECRET  from your local .env -- optional
 #         PUBLIC_URL           optional; defaults to http://192.168.1.30:8044
 #                              set to https://<hostname> once Cloudflare fronts it
+#         PUSH_RELAY_*         optional; the iOS app gets no notifications without them.
+#                              See the note at the end of this file.
 #         VAPID_*              optional; notifications stay off without them. See
 #                              NOTIFICATIONS at the bottom.
 #         BACKUP_KEEP          optional; nightly dumps to retain, default 14
@@ -189,6 +191,11 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_CONTACT: ${VAPID_CONTACT:-mailto:admin@localhost}
+      # The iOS app is notified through the shared push relay rather than from here, so
+      # no Apple credential belongs on this host. Both are needed or the iOS half stays
+      # off, exactly as absent VAPID keys leave web push off.
+      PUSH_RELAY_URL: ${PUSH_RELAY_URL:-}
+      PUSH_RELAY_KEY: ${PUSH_RELAY_KEY:-}
 
       # Optional. Set it and /metrics requires "Authorization: Bearer <token>"; unset, the
       # endpoint stays open, which is fine on a LAN and not fine through Cloudflare.
@@ -278,3 +285,29 @@ services:
 #
 # Browsers pin the public key when a device subscribes. Replacing the pair silently breaks
 # every existing subscription, and each device has to turn notifications on again.
+
+# ---------------------------------------------------------------------------------------
+# NOTIFICATIONS FOR THE iOS APP
+# ---------------------------------------------------------------------------------------
+#
+# The native client is not a browser and does not speak Web Push. It is notified through
+# the shared push relay, which holds the single Apple key for every app on this developer
+# account -- so no .p8, no Key ID, and no Team ID belongs on this host.
+#
+#     PUSH_RELAY_URL      https://push.jjrrr.co
+#     PUSH_RELAY_KEY      the key issued to com.jworthington.podarium
+#
+# Both, or the iOS half stays off. The key is per-bundle at the relay's end: it authorises
+# com.jworthington.podarium and nothing else, so it cannot be used to notify another app.
+#
+# Three things have to line up before a phone ever receives one:
+#
+#   1. com.jworthington.podarium is registered as an App ID at Apple with Push
+#      Notifications enabled. The .p8 is shared across apps; the App ID is not.
+#   2. A line for that bundle exists in apps.keys on the NAS beside the relay's .p8, and
+#      the relay has been restarted -- it reads that file once, at startup.
+#   3. These two variables are set here.
+#
+# Sandbox versus production is decided per device, not here. A debug build run from Xcode
+# registers a sandbox token and says so; the relay routes that request to Apple's sandbox
+# host while a TestFlight build on the same relay still goes to production.
