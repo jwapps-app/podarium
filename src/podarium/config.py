@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -45,7 +46,14 @@ class Settings(BaseSettings):
     # needs is where the relay is and a key scoped to Podarium's bundle. Absent means the
     # iOS half is simply off, exactly as absent VAPID keys turn web push off.
     push_relay_url: str | None = None
-    push_relay_key: str | None = None
+    # Accepts PUSH_RELAY_API_KEY as well, which is what every other app on this relay
+    # already calls it. One name across the estate beats a name that is technically
+    # tidier here and wrong everywhere someone has the muscle memory -- and a variable
+    # that silently resolves to empty is a bad way to find out, as this one was.
+    push_relay_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PUSH_RELAY_KEY", "PUSH_RELAY_API_KEY"),
+    )
 
     # First-boot bootstrap. Applied only when the users table is empty.
     podarium_username: str | None = None

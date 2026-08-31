@@ -196,3 +196,37 @@ class TestTheTestButtonReachesPhones:
         await client.post("/api/push/test")
 
         assert sent == []
+
+
+class TestTheRelayKeyName:
+    """PUSH_RELAY_API_KEY is what every other app on this relay already calls it.
+
+    Podarium reading only PUSH_RELAY_KEY meant the value resolved to empty, the relay
+    looked unconfigured, and notifications went to browsers while the phone stayed silent
+    with nothing logged. Both names are accepted so the muscle memory is right.
+    """
+
+    def _settings(self, monkeypatch, **env):
+        from podarium.config import Settings
+
+        for name in ("PUSH_RELAY_KEY", "PUSH_RELAY_API_KEY", "PUSH_RELAY_URL"):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        return Settings(_env_file=None)
+
+    def test_the_house_name_is_accepted(self, monkeypatch):
+        settings = self._settings(
+            monkeypatch, PUSH_RELAY_API_KEY="abc123", PUSH_RELAY_URL="http://relay"
+        )
+        assert settings.push_relay_key == "abc123"
+
+    def test_the_plain_name_still_works(self, monkeypatch):
+        # Whatever is already deployed must not break for the sake of tidiness.
+        settings = self._settings(
+            monkeypatch, PUSH_RELAY_KEY="abc123", PUSH_RELAY_URL="http://relay"
+        )
+        assert settings.push_relay_key == "abc123"
+
+    def test_neither_leaves_it_unset(self, monkeypatch):
+        assert self._settings(monkeypatch).push_relay_key is None

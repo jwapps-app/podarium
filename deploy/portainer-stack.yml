@@ -195,7 +195,9 @@ services:
       # no Apple credential belongs on this host. Both are needed or the iOS half stays
       # off, exactly as absent VAPID keys leave web push off.
       PUSH_RELAY_URL: ${PUSH_RELAY_URL:-}
-      PUSH_RELAY_KEY: ${PUSH_RELAY_KEY:-}
+      # PUSH_RELAY_API_KEY is the name used by every other app on this relay, so that is
+      # the one to set in the environment variables panel. The server accepts either.
+      PUSH_RELAY_KEY: ${PUSH_RELAY_API_KEY:-${PUSH_RELAY_KEY:-}}
 
       # Optional. Set it and /metrics requires "Authorization: Bearer <token>"; unset, the
       # endpoint stays open, which is fine on a LAN and not fine through Cloudflare.
@@ -295,7 +297,8 @@ services:
 # account -- so no .p8, no Key ID, and no Team ID belongs on this host.
 #
 #     PUSH_RELAY_URL      where the relay listens, e.g. http://192.168.1.11:8088
-#     PUSH_RELAY_KEY      the key issued to com.jworthington.podarium
+#     PUSH_RELAY_API_KEY  the key issued to com.jworthington.podarium -- the same name
+#                         every other app on this relay uses
 #
 # Both, or the iOS half stays off. The key is per-bundle at the relay's end: it authorises
 # com.jworthington.podarium and nothing else, so it cannot be used to notify another app.
