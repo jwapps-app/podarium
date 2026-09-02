@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from podarium.models import (
     AppSettings,
@@ -21,6 +22,18 @@ from podarium.models import (
     RetentionMode,
     User,
 )
+
+
+def without_large_text():
+    """Load options for queries that want episodes but not their biggest columns.
+
+    A transcript runs to megabytes and a chapters file to one; both are read by exactly
+    two code paths, and every other query that selects Episode was hauling them out of
+    Postgres for nothing -- a refresh over a back catalogue, a sync page, an inbox page.
+    Deferred here rather than on the model so the two paths that do want them, which load
+    a single episode by id, keep working without a second round trip.
+    """
+    return (defer(Episode.transcript_text), defer(Episode.chapters_json))
 
 
 async def feed_counts(

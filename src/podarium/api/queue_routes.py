@@ -7,7 +7,7 @@ from podarium.auth import current_user
 from podarium.db import get_session
 from podarium.models import Episode, EpisodeState, JobSource, QueueItem, User
 from podarium.schemas import QueueAddRequest, QueueItemOut, QueueOrderRequest, episode_out
-from podarium.services import compact_queue_positions, enqueue_download
+from podarium.services import compact_queue_positions, enqueue_download, without_large_text
 
 router = APIRouter(prefix="/api/queue", tags=["queue"])
 
@@ -17,6 +17,7 @@ async def _load_queue(session: AsyncSession, user_id: int) -> list[QueueItemOut]
     rows = (
         await session.execute(
             select(QueueItem, Episode, state)
+            .options(*without_large_text())
             .join(Episode, Episode.id == QueueItem.episode_id)
             .outerjoin(state, (state.episode_id == Episode.id) & (state.user_id == user_id))
             .where(QueueItem.user_id == user_id)

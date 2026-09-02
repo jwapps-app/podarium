@@ -20,7 +20,12 @@ from podarium.schemas import (
     TranscriptOut,
     episode_out,
 )
-from podarium.services import drop_from_queue, enqueue_download, get_app_settings
+from podarium.services import (
+    drop_from_queue,
+    enqueue_download,
+    get_app_settings,
+    without_large_text,
+)
 from podarium.transcripts import ensure_transcript
 
 router = APIRouter(prefix="/api/episodes", tags=["episodes"])
@@ -148,6 +153,7 @@ async def list_episodes(
 
     statement = (
         select(Episode, state, sort_key)
+        .options(*without_large_text())
         .join(Feed, Feed.id == Episode.feed_id)
         .outerjoin(state, (state.episode_id == Episode.id) & (state.user_id == user.id))
         .order_by(sort_key.desc(), Episode.id.desc())

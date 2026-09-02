@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.db import get_sessionmaker
 from podarium.models import AppSettings, Episode, EpisodeState, Feed
-from podarium.services import get_app_settings
+from podarium.services import get_app_settings, without_large_text
 
 log = logging.getLogger("podarium")
 
@@ -272,6 +272,7 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
     rows = (
         await session.execute(
             select(Episode, Feed)
+            .options(*without_large_text())
             .join(Feed, Feed.id == Episode.feed_id)
             .where(Episode.local_path.is_not(None))
         )

@@ -19,6 +19,7 @@ from podarium.services import (
     get_app_settings,
     mark_all_feeds_seen,
     mark_feed_seen,
+    without_large_text,
 )
 from podarium.subscribe import subscribe_feed
 
@@ -219,7 +220,10 @@ async def delete_feed(
     if purge:
         episodes = (
             await session.execute(
-                select(Episode).where(Episode.feed_id == feed.id).where(Episode.local_path.is_not(None))
+                select(Episode)
+                .options(*without_large_text())
+                .where(Episode.feed_id == feed.id)
+                .where(Episode.local_path.is_not(None))
             )
         ).scalars().all()
         for episode in episodes:

@@ -145,7 +145,10 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
                 digest = hashlib.sha256()
                 with partial.open("wb") as handle:
                     async for chunk in response.aiter_bytes(chunk_size=256 * 1024):
-                        handle.write(chunk)
+                        # Off the event loop. The download directory is a NAS mount,
+                        # and a blocking write that stalls there stalls every request
+                        # this process is serving -- audibly, for whoever is listening.
+                        await asyncio.to_thread(handle.write, chunk)
                         digest.update(chunk)
                         written += len(chunk)
                         if written > max_bytes:
@@ -178,7 +181,7 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
             )
 
         # Atomic rename, so a partially written file is never visible at the real path.
-        partial.replace(path)
+        await asyncio.to_thread(partial.replace, path)
 
         episode.local_path = str(path)
         episode.local_bytes = written

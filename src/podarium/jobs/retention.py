@@ -22,7 +22,7 @@ from podarium.db import get_sessionmaker
 from podarium.jobs.audio import drop_processed
 from podarium.metrics import download_dir_bytes, purged_total
 from podarium.models import Episode, EpisodeState, Feed, QueueItem, RetentionMode
-from podarium.services import effective_retention, get_app_settings
+from podarium.services import effective_retention, get_app_settings, without_large_text
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,7 @@ async def sweep(session: AsyncSession) -> int:
     rows = (
         await session.execute(
             select(Episode, EpisodeState, Feed)
+            .options(*without_large_text())
             .join(Feed, Feed.id == Episode.feed_id)
             .outerjoin(EpisodeState, EpisodeState.episode_id == Episode.id)
             .where(Episode.local_path.is_not(None))

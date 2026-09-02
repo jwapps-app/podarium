@@ -25,7 +25,7 @@ from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
 from podarium.db import get_session
 from podarium.models import DeletedFeed, Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import SyncOut, episode_out, feed_out
-from podarium.services import feed_counts, get_app_settings
+from podarium.services import feed_counts, get_app_settings, without_large_text
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
 
@@ -70,6 +70,7 @@ async def sync(
 
     episode_statement = (
         select(Episode, state)
+        .options(*without_large_text())
         .outerjoin(state, (state.episode_id == Episode.id) & (state.user_id == user.id))
         .order_by(changed_at, Episode.id)
         .limit(limit + 1)

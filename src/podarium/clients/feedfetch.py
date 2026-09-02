@@ -95,6 +95,24 @@ def _int_or_none(raw) -> int | None:
         return None
 
 
+def _short(raw, limit: int) -> str | None:
+    """A publisher string cut to fit its column.
+
+    These land in VARCHAR columns, and a value past the width fails the whole refresh at
+    commit -- every hour, with backoff, for as long as the feed carries it. Nothing here
+    is worth that: a language tag or a MIME type past the limit is garbage either way.
+    """
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    return text[:limit] if text else None
+
+
+# Column widths from the model, so a change there is caught here.
+LANGUAGE_MAX = 32
+MIME_MAX = 128
+
+
 def _is_explicit(raw) -> bool:
     return str(raw).strip().lower() in {"yes", "true", "explicit"}
 
@@ -210,7 +228,7 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
         author=channel.get("author") or channel.get("itunes_author") or channel.get("publisher"),
         description=channel.get("subtitle") or channel.get("description"),
         link=channel.get("link"),
-        language=channel.get("language"),
+        language=_short(channel.get("language"), LANGUAGE_MAX),
         image_url=image_url,
         explicit=_is_explicit(channel.get("itunes_explicit")),
     )
@@ -241,11 +259,11 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
                 published_at=_to_datetime(entry.get("published_parsed") or entry.get("updated_parsed")),
                 duration_seconds=parse_duration(entry.get("itunes_duration")),
                 enclosure_url=enclosure.get("href"),
-                enclosure_type=enclosure.get("type"),
+                enclosure_type=_short(enclosure.get("type"), MIME_MAX),
                 enclosure_bytes=_int_or_none(enclosure.get("length")),
                 chapters_url=_chapters_url(entry),
                 transcript_url=transcript[0],
-                transcript_type=transcript[1],
+                transcript_type=_short(transcript[1], MIME_MAX),
             )
         )
     return parsed
@@ -390,10 +408,15 @@ async def _fetch_once(
             final_url=str(response.url),
         )
 
+    # Parsed off the event loop. feedparser is pure Python and takes over a second on a
+    # full back catalogue, and for that second nothing else would be served -- including
+    # the byte-range requests of whoever is listening right now.
+    parsed = await asyncio.to_thread(parse_feed_bytes, bytes(body))
+
     return FetchResult(
         status_code=response.status_code,
         etag=response.headers.get("etag"),
         last_modified=response.headers.get("last-modified"),
-        parsed=parse_feed_bytes(bytes(body)),
+        parsed=parsed,
         final_url=str(response.url),
     )

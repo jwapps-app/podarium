@@ -46,11 +46,22 @@ from podarium.services import (
     enqueue_download,
     get_app_settings,
     unseen_episode_count,
+    without_large_text,
 )
 
 log = logging.getLogger(__name__)
 
 MAX_BACKOFF_DOUBLINGS = 6
+
+# How many feeds one refresh pass fetches at the same time.
+REFRESH_CONCURRENCY = 4
+
+# How long the relay may keep refusing a phone before it is forgotten. The relay reports
+# a dead token and an APNs outage with the same status, so a single refusal is not
+# evidence of anything; days of them are. The app re-registers on its next launch either
+# way, so forgetting too early costs notifications and forgetting too late costs one
+# wasted relay request per pass.
+FORGET_DEVICE_AFTER = timedelta(days=3)
 
 # How far a publisher's declared size may drift from what we downloaded before it is worth
 # saying so. Generous, because the declared length is unreliable in both directions: this
@@ -217,6 +228,7 @@ async def apply_auto_download_window(session: AsyncSession, feed: Feed) -> None:
         stale = (
             await session.execute(
                 select(Episode)
+                .options(*without_large_text())
                 .where(Episode.feed_id == feed.id)
                 .where(Episode.local_path.is_not(None))
                 .where(Episode.id.not_in(window_ids) if window_ids else true())
@@ -240,6 +252,7 @@ async def apply_auto_download_window(session: AsyncSession, feed: Feed) -> None:
     for episode in (
         await session.execute(
             select(Episode)
+            .options(*without_large_text())
             .where(Episode.id.in_(window_ids))
             .where(Episode.local_path.is_(None))
         )
@@ -310,7 +323,11 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         existing = {
             episode.guid: episode
             for episode in (
-                await session.execute(select(Episode).where(Episode.feed_id == feed.id))
+                await session.execute(
+                    select(Episode)
+                    .options(*without_large_text())
+                    .where(Episode.feed_id == feed.id)
+                )
             ).scalars()
         }
 
@@ -401,17 +418,39 @@ async def refresh_due_feeds() -> int:
         now = datetime.now(UTC)
         due = [feed for feed in feeds if _is_due(feed, interval_seconds, now)]
 
+    # A few at a time rather than one after another. The pass used to be the *sum* of
+    # every feed's fetch time, so one publisher answering slowly -- thirty seconds to a
+    # timeout, sixty with the retry -- held every feed behind it, and the notification for
+    # the whole pass waited on the slowest host in it. Four is enough to hide a slow
+    # host and few enough to leave the connection pool to the requests.
+    gate = asyncio.Semaphore(REFRESH_CONCURRENCY)
+
+    async def one(feed_id: int) -> tuple[str, int] | None:
+        async with gate, sessionmaker() as session:
+            fresh = await session.get(Feed, feed_id)
+            if fresh is None:
+                return None
+            outcome = await refresh_feed(session, fresh, user_agent=user_agent)
+            if outcome.new_episodes and fresh.notify:
+                return (fresh.title or fresh.feed_url, outcome.new_episodes)
+            return ("", 0)
+
+    results = await asyncio.gather(*(one(feed.id) for feed in due), return_exceptions=True)
+
     refreshed = 0
     arrivals: list[tuple[str, int]] = []
-    for feed in due:
-        async with sessionmaker() as session:
-            fresh = await session.get(Feed, feed.id)
-            if fresh is None:
-                continue
-            outcome = await refresh_feed(session, fresh, user_agent=user_agent)
-            refreshed += 1
-            if outcome.new_episodes and fresh.notify:
-                arrivals.append((fresh.title or fresh.feed_url, outcome.new_episodes))
+    for feed, result in zip(due, results):
+        if isinstance(result, BaseException):
+            # refresh_feed already turns fetch and parse failures into feed.fetch_error;
+            # what reaches here is a database error, and one feed's must not lose the
+            # pass's notification for the others.
+            log.error("refresh of feed %s failed", feed.id, exc_info=result)
+            continue
+        if result is None:
+            continue
+        refreshed += 1
+        if result[1]:
+            arrivals.append(result)
 
     if arrivals:
         async with sessionmaker() as session:
@@ -477,9 +516,12 @@ async def notify_apns_devices(
 ) -> None:
     """Send to this user's iPhones through the relay.
 
-    A device the relay rejects outright is forgotten, the same way a dead Web Push
-    subscription is: an uninstalled app or a revoked token will never work again, and
-    keeping the row means failing on it every refresh for ever.
+    A device the relay has refused continuously for FORGET_DEVICE_AFTER is forgotten, the
+    way a dead Web Push subscription is: an uninstalled app or a revoked token will never
+    work again, and keeping the row means failing on it every refresh for ever. Not on the
+    first refusal, though -- the relay answers a dead token and an APNs outage alike, and
+    forgetting the phone over a bad hour at Apple's end would lose every notification
+    until the app was next opened.
     """
     if not pushrelay.configured():
         # Said out loud. A silent return here is indistinguishable from a successful send,
@@ -513,10 +555,22 @@ async def notify_apns_devices(
         )
         if accepted:
             device.last_used_at = now
-        else:
+            device.failing_since = None
+            continue
+
+        if device.failing_since is None:
+            device.failing_since = now
+            continue
+        failing_since = device.failing_since
+        if failing_since.tzinfo is None:
+            failing_since = failing_since.replace(tzinfo=UTC)
+        if now - failing_since >= FORGET_DEVICE_AFTER:
             dead.append(device)
 
     for device in dead:
+        log.info(
+            "forgetting a device the relay has refused since %s", device.failing_since
+        )
         await session.delete(device)
     await session.commit()
 
