@@ -19,13 +19,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from podarium.auth import current_user
 from podarium.clients.http import build_client
 from podarium.db import get_session
-from podarium.jobs.artwork import artwork_by_hash, ensure_episode_artwork, ensure_feed_artwork
+from podarium.jobs.artwork import (
+    artwork_by_hash,
+    ensure_episode_artwork,
+    ensure_feed_artwork,
+    served_image_type,
+)
 from podarium.models import ArtworkCache, Episode, Feed, User
 from podarium.services import get_app_settings
 from podarium.streaming import (
     VERSION_PARAM,
     copy_for_token,
     preferred_copy,
+    safe_audio_type,
 )
 
 router = APIRouter(prefix="/api", tags=["media"])
@@ -172,7 +178,10 @@ async def _proxy_origin(episode: Episode, request: Request, user_agent: str) -> 
 
     # Keys are normalised to lower case before setdefault: a plain dict would otherwise
     # treat "accept-ranges" and "Accept-Ranges" as two headers and emit both.
-    passthrough = {"content-length", "content-range", "accept-ranges", "content-type"}
+    #
+    # Content-Type is deliberately not passed through. It is the publisher's to set, and
+    # this response is on our origin: see safe_audio_type.
+    passthrough = {"content-length", "content-range", "accept-ranges"}
     response_headers = {
         k.lower(): v for k, v in upstream.headers.items() if k.lower() in passthrough
     }
@@ -182,7 +191,7 @@ async def _proxy_origin(episode: Episode, request: Request, user_agent: str) -> 
         body(),
         status_code=upstream.status_code,
         headers=response_headers,
-        media_type=upstream.headers.get("content-type", "audio/mpeg"),
+        media_type=safe_audio_type(upstream.headers.get("content-type")),
     )
 
 
@@ -247,7 +256,7 @@ def _artwork_response(
 
     return FileResponse(
         entry.local_path,
-        media_type=entry.content_type or "image/jpeg",
+        media_type=served_image_type(entry),
         headers=cache_headers,
     )
 

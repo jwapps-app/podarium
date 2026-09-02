@@ -36,8 +36,28 @@ _PROCESSED = "p"
 _ORIGINAL = "o"
 
 
+_FALLBACK_MEDIA_TYPE = "audio/mpeg"
+_NON_AUDIO_TYPES_ALLOWED = {"application/ogg", "application/octet-stream"}
+
+
+def safe_audio_type(declared: str | None) -> str:
+    """A media type this server is willing to put on an audio response.
+
+    The declared type is the publisher's -- from the feed's <enclosure>, or from the
+    upstream response when an episode is proxied -- and it is served from this origin. A
+    feed that declares text/html would otherwise have /api/stream answer as a web page on
+    the same origin as the session cookie. Anything that is not audio (or video, which
+    some video podcasts declare honestly) is served as audio: if the bytes are audio the
+    player copes, and if they are not, nothing renders them.
+    """
+    base = (declared or "").split(";")[0].strip().lower()
+    if base.startswith(("audio/", "video/")) or base in _NON_AUDIO_TYPES_ALLOWED:
+        return base
+    return _FALLBACK_MEDIA_TYPE
+
+
 def _media_type(episode: Episode) -> str:
-    return episode.enclosure_type or "audio/mpeg"
+    return safe_audio_type(episode.enclosure_type)
 
 
 def preferred_copy(episode: Episode) -> tuple[Path, str, str] | None:
