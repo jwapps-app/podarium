@@ -146,9 +146,9 @@ export const api = {
   totpSetup: () => request<TotpSetup>("/api/auth/totp/setup", { method: "POST" }),
 
   totpEnable: (secret: string, code: string) =>
-    request<User>(`/api/auth/totp/enable?secret=${encodeURIComponent(secret)}`, {
+    request<User>("/api/auth/totp/enable", {
       method: "POST",
-      body: JSON.stringify({ code }),
+      body: JSON.stringify({ secret, code }),
     }),
 
   totpDisable: (password: string) =>

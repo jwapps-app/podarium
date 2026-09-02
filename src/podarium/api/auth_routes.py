@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -6,6 +8,7 @@ from podarium.auth import (
     clear_session_cookie,
     current_user,
     generate_api_token,
+    hash_password,
     issue_session_cookie,
     request_is_secure,
     verify_password,
@@ -33,6 +36,9 @@ from podarium.schemas import (
 )
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+# Hashed once at import, from a value nobody knows. See login().
+_UNKNOWN_USER_HASH = hash_password(secrets.token_hex(32))
 
 
 def _user_out(user: User) -> UserOut:
@@ -66,11 +72,19 @@ async def login(
     user = (
         await session.execute(select(User).where(User.username == body.username))
     ).scalar_one_or_none()
-    ok = user is not None and verify_password(user.password_hash, body.password)
+    if user is None:
+        # Verified against a throwaway hash so an unknown name takes as long as a wrong
+        # password. Skipping the work here made the two distinguishable by the clock,
+        # whatever the response body said.
+        verify_password(_UNKNOWN_USER_HASH, body.password)
+        ok = False
+    else:
+        ok = verify_password(user.password_hash, body.password)
 
     if not ok:
         await record_attempt(session, body.username, succeeded=False)
-        # Deliberately identical whether the username exists or the password is wrong.
+        # Identical in body and in timing whether the username exists or the password is
+        # wrong.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
     if user.totp_secret:
@@ -144,17 +158,21 @@ async def totp_setup(
 @router.post("/totp/enable", response_model=UserOut)
 async def totp_enable(
     body: TotpEnableRequest,
-    secret: str = Query(description="The secret from /totp/setup, echoed back."),
     user: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
-    """Confirm a code from the pending secret, then store it."""
+    """Confirm a code from the pending secret, then store it.
+
+    The secret arrives in the body. It used to be a query parameter, which put it in the
+    access log of every proxy and container between the browser and here.
+    """
     if user.totp_secret is not None:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Two-factor authentication is already on."
         )
 
+    secret = body.secret
     step = verify_totp(secret, body.code)
     if step is None:
         raise HTTPException(

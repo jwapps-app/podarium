@@ -40,8 +40,7 @@ async def enable(client, session) -> str:
     secret = setup["secret"]
     response = await client.post(
         "/api/auth/totp/enable",
-        params={"secret": secret},
-        json={"code": pyotp.TOTP(secret).now()},
+        json={"secret": secret, "code": pyotp.TOTP(secret).now()},
     )
     assert response.status_code == 200, response.text
     assert response.json()["totp_enabled"] is True
@@ -72,7 +71,7 @@ async def test_enabling_requires_a_working_code(client):
     secret = (await client.post("/api/auth/totp/setup")).json()["secret"]
 
     response = await client.post(
-        "/api/auth/totp/enable", params={"secret": secret}, json={"code": "000000"}
+        "/api/auth/totp/enable", json={"secret": secret, "code": "000000"}
     )
 
     assert response.status_code == 400

@@ -49,6 +49,10 @@ class TotpSetupOut(BaseModel):
 
 
 class TotpEnableRequest(BaseModel):
+    # The pending secret from /totp/setup, echoed back. In the body, never the query
+    # string: the access log records the request line, and a second factor that has been
+    # written to a log file is not a second factor.
+    secret: str
     code: str
 
 
@@ -58,7 +62,8 @@ class TotpDisableRequest(BaseModel):
 
 
 class TokenCreateRequest(BaseModel):
-    name: str = ""
+    # Bounded to the column, so a long device name is a 422 rather than a 500.
+    name: str = Field(default="", max_length=255)
 
 
 class TokenOut(BaseModel):
