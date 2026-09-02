@@ -1,4 +1,6 @@
+import asyncio
 import ipaddress
+import socket
 
 import httpx
 
@@ -7,32 +9,76 @@ from podarium.config import get_settings
 # Hostnames that mean "this machine" without needing DNS to say so.
 _LOCAL_NAMES = {"localhost", "localhost.localdomain", "ip6-localhost"}
 
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _is_disallowed(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Anything that is not a public, routable address.
+
+    ``is_global`` covers the obvious ranges -- loopback, RFC 1918, link-local, multicast,
+    unspecified -- and the less obvious ones a hand-written list forgets: carrier-grade NAT
+    (100.64/10), the benchmarking block, and the IPv4-mapped IPv6 forms of all of them.
+    """
+    return not address.is_global
+
+
+async def _resolve_via_dns(host: str, port: int) -> list[str]:
+    """Every address the OS would connect to for this host, as strings."""
+    loop = asyncio.get_running_loop()
+    try:
+        infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        # Unresolvable. Let the connection fail on its own and say so in its own words;
+        # refusing here would report every typo as a security decision.
+        return []
+    return [info[4][0] for info in infos]
+
+
+# Indirection so the test suite can stub resolution: most tests fetch from hosts that do
+# not exist, and a real lookup per request is a DNS timeout per test on an offline machine.
+_resolve = _resolve_via_dns
+
 
 async def _refuse_private_targets(request: httpx.Request) -> None:
     """Outbound guard: no publisher-derived fetch may target a private address.
 
-    Runs per request, so a redirect into the LAN is caught as well as a direct URL. Only
-    literal IPs and localhost names are checked -- resolving hostnames here would break
-    nothing but add a DNS round trip per request, and a hostname pointed somewhere private
-    (DNS rebinding) defeats resolve-then-connect checks anyway unless the resolved address
-    is pinned for the actual connection. Defence, not a boundary.
+    Runs per request, so a redirect into the LAN is caught as well as a direct URL.
+
+    The host is *resolved*, not pattern-matched. A string check on literal IPs looks
+    sufficient and is not: "2130706433", "0x7f000001", "127.1" and "0" are not addresses
+    to the ``ipaddress`` module, so they read as hostnames -- and the resolver turns every
+    one of them into 127.0.0.1 and connects. Asking the OS what it would connect to
+    catches those spellings and the plain case of a hostname that points inside the
+    network, at the price of one lookup the resolver caches anyway.
+
+    What this still does not close is DNS rebinding proper: an answer that changes between
+    this lookup and the connection a moment later. Pinning the resolved address into the
+    transport is the cure, and more machinery than a single-user server warrants.
     """
-    host = request.url.host
-    if host.lower().strip("[]") in _LOCAL_NAMES:
+    host = request.url.host.strip("[]")
+    if host.lower() in _LOCAL_NAMES:
         raise httpx.RequestError(f"refusing to fetch from {host}", request=request)
+
     try:
-        address = ipaddress.ip_address(host.strip("[]"))
+        literal = ipaddress.ip_address(host)
     except ValueError:
-        return  # A hostname; let DNS and the connection proceed.
-    if (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    ):
-        raise httpx.RequestError(f"refusing to fetch from {host}", request=request)
+        literal = None
+
+    if literal is not None:
+        if _is_disallowed(literal):
+            raise httpx.RequestError(f"refusing to fetch from {host}", request=request)
+        return
+
+    port = request.url.port or _DEFAULT_PORTS.get(request.url.scheme, 80)
+    for resolved in await _resolve(host, port):
+        try:
+            address = ipaddress.ip_address(resolved)
+        except ValueError:
+            continue
+        if _is_disallowed(address):
+            raise httpx.RequestError(
+                f"refusing to fetch from {host} (resolves to {resolved})", request=request
+            )
 
 
 def build_client(

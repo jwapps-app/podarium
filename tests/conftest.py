@@ -101,6 +101,21 @@ async def _clean_state():
         directory.mkdir(parents=True, exist_ok=True)
 
 
+@pytest.fixture(autouse=True)
+def _no_dns(monkeypatch):
+    """The outbound guard resolves hostnames before connecting. Tests fetch from hosts
+    that do not exist (respx answers for them), and a real lookup per request is a resolver
+    timeout per test on a machine without a network. Unresolvable means "let it through",
+    which is exactly what a mocked publisher needs; the guard's own tests restore the real
+    resolver."""
+    from podarium.clients import http as outbound
+
+    async def unresolvable(host: str, port: int) -> list[str]:
+        return []
+
+    monkeypatch.setattr(outbound, "_resolve", unresolvable)
+
+
 @pytest.fixture
 async def session():
     async with db_module.get_sessionmaker()() as s:
