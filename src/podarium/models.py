@@ -450,6 +450,10 @@ class ApnsDevice(Base):
     sandbox: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = _now_col(nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the relay started refusing this device, cleared by the next success. The relay
+    # answers 502 for a dead token and for an APNs outage alike, so one refusal proves
+    # nothing; a device that has failed continuously for days is forgotten.
+    failing_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DeletedFeed(Base):

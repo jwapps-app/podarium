@@ -230,3 +230,84 @@ class TestTheRelayKeyName:
 
     def test_neither_leaves_it_unset(self, monkeypatch):
         assert self._settings(monkeypatch).push_relay_key is None
+
+
+class TestARefusalIsNotAForgetting:
+    """The relay answers 502 for a dead token and for an APNs outage alike.
+
+    Forgetting the phone on the first refusal meant one bad hour at Apple's end lost every
+    notification until the app was next opened. A device is forgotten only once the relay
+    has refused it continuously for days.
+    """
+
+    async def _register(self, client):
+        await client.post(
+            "/api/push/device",
+            json={"device_token": "phone-token", "bundle_id": "com.jworthington.podarium"},
+        )
+
+    async def test_one_refusal_keeps_the_device_and_starts_the_clock(
+        self, client, session, user, monkeypatch
+    ):
+        async def refused(**kwargs):
+            return False
+
+        monkeypatch.setattr(pushrelay, "configured", lambda: True)
+        monkeypatch.setattr(pushrelay, "send", refused)
+        await self._register(client)
+
+        await client.post("/api/push/test")
+
+        rows = await devices(session, user)
+        assert len(rows) == 1
+        assert rows[0].failing_since is not None
+
+    async def test_a_success_clears_the_clock(self, client, session, user, monkeypatch):
+        from datetime import UTC, datetime, timedelta
+
+        async def accepted(**kwargs):
+            return True
+
+        monkeypatch.setattr(pushrelay, "configured", lambda: True)
+        monkeypatch.setattr(pushrelay, "send", accepted)
+        await self._register(client)
+        (device,) = await devices(session, user)
+        device.failing_since = datetime.now(UTC) - timedelta(days=1)
+        await session.commit()
+
+        await client.post("/api/push/test")
+
+        await session.refresh(device)
+        assert device.failing_since is None
+        assert device.last_used_at is not None
+
+    async def test_days_of_refusals_forget_the_device(self, client, session, user, monkeypatch):
+        from datetime import UTC, datetime, timedelta
+
+        from podarium.jobs.refresh import FORGET_DEVICE_AFTER
+
+        async def refused(**kwargs):
+            return False
+
+        monkeypatch.setattr(pushrelay, "configured", lambda: True)
+        monkeypatch.setattr(pushrelay, "send", refused)
+        await self._register(client)
+        (device,) = await devices(session, user)
+        device.failing_since = datetime.now(UTC) - FORGET_DEVICE_AFTER - timedelta(hours=1)
+        await session.commit()
+
+        await client.post("/api/push/test")
+
+        assert await devices(session, user) == []
+
+    async def test_an_unreachable_relay_is_a_failed_send_not_a_crash(self, monkeypatch):
+        """"Send a test" must report that the phone was not reached, not 500."""
+        from podarium import config
+
+        monkeypatch.setattr(config.get_settings(), "push_relay_url", "http://127.0.0.1:1")
+        monkeypatch.setattr(config.get_settings(), "push_relay_key", "k")
+
+        accepted = await pushrelay.send(
+            device_token="t", bundle_id="b", title="x", body="y", user_agent="test"
+        )
+        assert accepted is False

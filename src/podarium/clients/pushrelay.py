@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+import httpx
+
 from podarium.clients.http import build_client
 from podarium.config import get_settings
 
@@ -57,14 +59,23 @@ async def send(
     # configuration, and self-hosted infrastructure sits on a private address as a matter
     # of course. The alternative was ALLOW_PRIVATE_FETCH, which would also have dropped
     # the guard for every publisher feed.
-    async with build_client(user_agent, guard_private=False) as client:
-        response = await client.post(
-            f"{settings.push_relay_url.rstrip('/')}/notify",
-            json=payload,
-            headers={"X-API-Key": settings.push_relay_key},
-        )
+    try:
+        async with build_client(user_agent, guard_private=False) as client:
+            response = await client.post(
+                f"{settings.push_relay_url.rstrip('/')}/notify",
+                json=payload,
+                headers={"X-API-Key": settings.push_relay_key},
+            )
+    except httpx.HTTPError as exc:
+        # The relay being down is a failure to deliver, not a reason for the caller to
+        # blow up: "send a test" should say it did not reach the phone, not 500.
+        log.warning("push relay unreachable: %s", exc)
+        return False
 
     if response.status_code >= 400:
+        # The relay does not say which. A dead token, an APNs outage and a revoked key
+        # all come back as one status, so the caller must not read a refusal as "this
+        # device is gone".
         log.warning(
             "push relay refused a notification: %s %s",
             response.status_code,

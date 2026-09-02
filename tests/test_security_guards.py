@@ -118,3 +118,95 @@ class TestSecurityHeaders:
         assert "script-src 'self'" in csp
         assert "default-src 'self'" in csp
         assert "unsafe-inline" not in csp.split("style-src")[0]  # never in script-src
+
+
+class TestTheGuardResolvesWhatItIsGiven:
+    """A string check on the host is not a check on where the connection goes.
+
+    "2130706433", "0x7f000001", "127.1" and "0" are not addresses to the ipaddress module,
+    so a guard that only parses literals waves them through as hostnames -- and the
+    resolver turns every one of them into 127.0.0.1. The guard now asks the OS what it
+    would connect to. These tests use the real resolver for exactly that reason; the rest
+    of the suite stubs it.
+    """
+
+    @pytest.fixture(autouse=True)
+    def real_resolver(self, monkeypatch):
+        from podarium.clients import http as outbound
+
+        monkeypatch.setattr(outbound, "_resolve", outbound._resolve_via_dns)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "http://2130706433/",
+            "http://0x7f000001/",
+            "http://127.1/",
+            "http://0/",
+        ],
+    )
+    async def test_loopback_spelled_differently_is_still_loopback(self, guard_on, target):
+        async with build_client("test") as outbound:
+            with pytest.raises(httpx.RequestError, match="refusing"):
+                await outbound.get(target)
+
+    async def test_a_hostname_that_resolves_inside_the_network_is_refused(
+        self, guard_on, monkeypatch
+    ):
+        """The case the old docstring admitted it did not cover: a publisher's own DNS
+        pointing a name at the router."""
+        from podarium.clients import http as outbound
+
+        async def points_at_the_router(host: str, port: int) -> list[str]:
+            return ["192.168.1.1"]
+
+        monkeypatch.setattr(outbound, "_resolve", points_at_the_router)
+
+        async with build_client("test") as client:
+            with pytest.raises(httpx.RequestError, match="resolves to 192.168.1.1"):
+                await client.get("http://cdn.publisher.example/art.jpg")
+
+    async def test_carrier_grade_nat_counts_as_private(self, guard_on):
+        # 100.64/10 is not in the RFC 1918 list and is exactly the kind of range a
+        # hand-written check forgets. is_global knows about it.
+        async with build_client("test") as outbound:
+            with pytest.raises(httpx.RequestError, match="refusing"):
+                await outbound.get("http://100.64.0.1/")
+
+
+class TestTheDevelopmentSecretIsRefused:
+    def test_a_real_deployment_will_not_start_on_it(self):
+        from types import SimpleNamespace
+
+        from podarium.config import INSECURE_SECRET_KEY
+        from podarium.main import check_secret_key
+
+        settings = SimpleNamespace(secret_key=INSECURE_SECRET_KEY, run_background_jobs=True)
+        with pytest.raises(RuntimeError, match="SECRET_KEY"):
+            check_secret_key(settings)
+
+    def test_tests_are_exempt(self):
+        from types import SimpleNamespace
+
+        from podarium.config import INSECURE_SECRET_KEY
+        from podarium.main import check_secret_key
+
+        check_secret_key(SimpleNamespace(secret_key=INSECURE_SECRET_KEY, run_background_jobs=False))
+
+    def test_a_private_key_passes(self):
+        from types import SimpleNamespace
+
+        from podarium.main import check_secret_key
+
+        check_secret_key(SimpleNamespace(secret_key="x" * 64, run_background_jobs=True))
+
+
+class TestValidationErrorsDoNotEchoInput:
+    async def test_a_rejected_login_does_not_contain_the_password(self, client):
+        response = await client.post(
+            "/api/auth/login", json={"username": "jw", "password": 12345}
+        )
+        assert response.status_code == 422
+        message = response.json()["error"]["message"]
+        assert "12345" not in message
+        assert "password" in message
