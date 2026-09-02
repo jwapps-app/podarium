@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+INSECURE_SECRET_KEY = "dev-insecure-change-me"
+
 
 class Settings(BaseSettings):
     """Runtime configuration. Environment only -- secrets never live in the database (spec 7)."""
@@ -15,7 +17,9 @@ class Settings(BaseSettings):
     # The externally reachable base URL. The server builds absolute links from it (spec 3).
     public_url: str = "http://localhost:8044"
 
-    secret_key: str = "dev-insecure-change-me"
+    # The development value. Startup refuses to run a real deployment on it: it is in the
+    # public source, and a session cookie signed with a published key is not signed.
+    secret_key: str = INSECURE_SECRET_KEY
     session_cookie_name: str = "podarium_session"
     session_max_age_seconds: int = 60 * 60 * 24 * 30
 

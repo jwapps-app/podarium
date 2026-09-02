@@ -36,12 +36,12 @@ from podarium.api import (
     storage_routes,
     sync_routes,
 )
-from podarium.auth import bootstrap_user
+from podarium.auth import bootstrap_user, request_is_secure
 from podarium.clients.podcastindex import (
     describe_credential_problems,
     verify_credentials,
 )
-from podarium.config import get_settings
+from podarium.config import INSECURE_SECRET_KEY, get_settings
 from podarium.db import get_sessionmaker
 from podarium.jobs.audio import processing_loop
 from podarium.jobs.downloader import download_workers
@@ -53,6 +53,29 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 log = logging.getLogger("podarium")
 
 
+def check_secret_key(settings) -> None:
+    """Refuse to serve on the key that ships in the source.
+
+    The Portainer stack makes SECRET_KEY mandatory, but the image is public and a compose
+    file written by hand need not. With the default, every session cookie is forgeable by
+    anyone who has read config.py, and the encrypted TOTP secret is encrypted with a
+    published key. Tests run without background jobs and are exempt; everything else is
+    a real deployment and must have its own key.
+    """
+    if settings.secret_key == INSECURE_SECRET_KEY:
+        if settings.run_background_jobs:
+            raise RuntimeError(
+                "SECRET_KEY is the built-in development value. Set it to something "
+                "private (openssl rand -hex 32) before starting the server."
+            )
+        log.warning("SECRET_KEY is the development default; sessions are forgeable")
+    elif len(settings.secret_key) < 32:
+        log.warning(
+            "SECRET_KEY is only %s characters; 32 or more is expected (openssl rand -hex 32)",
+            len(settings.secret_key),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -62,6 +85,8 @@ async def lifespan(app: FastAPI):
     # hoping. Not the very first line -- the web-UI line is emitted at import, before the
     # lifespan runs -- so grep for it rather than taking the head of the log.
     log.info("Podarium %s starting, build %s", __version__, settings.podarium_build)
+
+    check_secret_key(settings)
 
     settings.download_dir.mkdir(parents=True, exist_ok=True)
     settings.artwork_dir.mkdir(parents=True, exist_ok=True)
@@ -162,6 +187,11 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     for name, value in _SECURITY_HEADERS.items():
         response.headers.setdefault(name, value)
+    # Only on a connection that was already https: sent over plain http on the LAN it
+    # would be ignored by the browser anyway, and on a LAN host without TLS it must never
+    # be cached, or the address stops working until the entry expires.
+    if request_is_secure(request):
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
     return response
 
 
@@ -177,9 +207,16 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    # Location and reason only. pydantic's error records also carry the offending input,
+    # and echoing that back turns a rejected login body into a response with the password
+    # in it.
+    problems = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ()) if part != "body")
+        problems.append(f"{location}: {error.get('msg')}" if location else str(error.get("msg")))
     return JSONResponse(
         status_code=422,
-        content={"error": {"code": "validation_error", "message": str(exc.errors())}},
+        content={"error": {"code": "validation_error", "message": "; ".join(problems)}},
     )
 
 
