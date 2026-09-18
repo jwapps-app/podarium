@@ -55,6 +55,12 @@ export function SearchPage() {
     );
   };
 
+  // One mutation serves every row, so "is it pending" alone would mark them all as being
+  // added. The row that was clicked says "Adding…"; the rest only wait their turn.
+  const addingUrl = feedActions.subscribe.isPending
+    ? feedActions.subscribe.variables?.feed_url
+    : undefined;
+
   const searchUnavailable = searchError instanceof ApiError && searchError.isServiceUnavailable;
 
   return (
@@ -198,7 +204,7 @@ export function SearchPage() {
                         onClick={() => subscribe(result)}
                         disabled={feedActions.subscribe.isPending}
                       >
-                        {feedActions.subscribe.isPending ? "Adding…" : "Subscribe"}
+                        {addingUrl === result.feed_url ? "Adding…" : "Subscribe"}
                       </button>
                     )}
                   </div>
