@@ -200,3 +200,44 @@ class TestOneLiveJobPerEpisode:
                 await other.commit()
 
         assert first is not None
+
+
+class TestArtworkIsAskedForAgain:
+    async def test_a_week_old_cover_is_refetched_and_a_new_one_kept(self, session):
+        import httpx
+        import respx
+        from sqlalchemy import select
+
+        from podarium.jobs.artwork import REVALIDATE_AFTER, ensure_artwork
+        from podarium.models import ArtworkCache
+
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+        newer = b"\x89PNG\r\n\x1a\n" + b"\x01" * 64
+        url = "https://cdn.example/cover.png"
+
+        with respx.mock:
+            route = respx.get(url).mock(return_value=httpx.Response(200, content=png, headers={"Content-Type": "image/png"}))
+            entry = await ensure_artwork(session, url, user_agent="test")
+            assert entry is not None and entry.local_path
+            from pathlib import Path
+            assert Path(entry.local_path).read_bytes() == png
+
+            # Asked again straight away: nothing happens.
+            await ensure_artwork(session, url, user_agent="test")
+            assert route.call_count == 1
+
+            # A week later the publisher has swapped the cover behind the same address.
+            entry.fetched_at = datetime.now(UTC) - REVALIDATE_AFTER - timedelta(hours=1)
+            await session.commit()
+            route.mock(return_value=httpx.Response(200, content=newer, headers={"Content-Type": "image/png"}))
+            entry = await ensure_artwork(session, url, user_agent="test")
+            assert route.call_count == 2
+            assert Path(entry.local_path).read_bytes() == newer
+
+            # And a failed refetch keeps what it had.
+            entry.fetched_at = datetime.now(UTC) - REVALIDATE_AFTER - timedelta(hours=1)
+            await session.commit()
+            route.mock(return_value=httpx.Response(503))
+            entry = await ensure_artwork(session, url, user_agent="test")
+            assert Path(entry.local_path).read_bytes() == newer
+            assert (await session.execute(select(ArtworkCache))).scalar_one().local_path == entry.local_path

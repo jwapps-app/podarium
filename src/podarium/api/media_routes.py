@@ -243,7 +243,10 @@ def _artwork_response(
     if entry is None or not entry.local_path or not Path(entry.local_path).exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No artwork available")
 
-    etag = f'"{entry.url_hash}"'
+    # The file's own validators are in the tag, so new bytes behind the same address --
+    # a cover replaced by the publisher and refetched here -- are new to the browser too.
+    file_tag, _, _ = _validators(Path(entry.local_path))
+    etag = f'"{entry.url_hash}-{file_tag.strip(chr(34))}"'
     policy = (
         "private, max-age=31536000, immutable"
         if immutable

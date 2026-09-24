@@ -58,7 +58,9 @@ async def test_artwork_is_served_with_a_validating_etag(client):
 
     assert response.status_code == 200
     assert response.content == IMAGE
-    assert response.headers["etag"] == f'"{client.digest}"'
+    # The URL's hash, plus the file's own validators: new bytes behind the same address
+    # must read as new to the browser too.
+    assert response.headers["etag"].startswith(f'"{client.digest}-')
 
     cache_control = response.headers["cache-control"]
     assert "must-revalidate" in cache_control
@@ -84,7 +86,7 @@ async def test_hash_addressed_artwork_is_immutable(client):
 
 
 async def test_matching_etag_returns_304(client):
-    etag = f'"{client.digest}"'
+    etag = (await client.get(f"/api/images/feed/{client.feed_id}")).headers["etag"]
     response = await client.get(
         f"/api/images/feed/{client.feed_id}", headers={"If-None-Match": etag}
     )

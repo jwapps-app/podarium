@@ -97,6 +97,11 @@ def served_image_type(entry: ArtworkCache) -> str:
 # dozens of times an hour.
 RETRY_FAILED_AFTER = timedelta(hours=6)
 
+# A cached image is asked for again after this long. Publishers change cover art behind
+# an address that does not change, and a cache keyed on the address alone kept the old
+# cover for ever. A refetch that fails leaves the old file in place.
+REVALIDATE_AFTER = timedelta(days=7)
+
 # One in-flight fetch per URL hash. Two episodes sharing a feed image on a cold cache
 # would otherwise both download it.
 _locks: dict[str, asyncio.Lock] = {}
@@ -136,7 +141,11 @@ async def _ensure_artwork_locked(
     ).scalar_one_or_none()
 
     if entry is not None and entry.local_path and Path(entry.local_path).exists():
-        return entry
+        fetched = entry.fetched_at
+        if fetched is not None and fetched.tzinfo is None:
+            fetched = fetched.replace(tzinfo=UTC)
+        if fetched is None or datetime.now(UTC) - fetched < REVALIDATE_AFTER:
+            return entry
 
     if entry is not None and entry.fetch_error and entry.fetched_at is not None:
         last_try = entry.fetched_at
