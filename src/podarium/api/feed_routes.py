@@ -210,24 +210,27 @@ async def delete_feed(
     _: User = Depends(current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """Unsubscribe. ``?purge=true`` also deletes the downloaded audio.
+    """Unsubscribe: the show, its episode rows, and their audio.
 
     This is the one path that does delete episode rows, and it is explicit and
-    user-initiated -- unlike retention, which never does.
+    user-initiated -- unlike retention, which never does. The audio goes with the rows
+    because once the rows are gone nothing points at the files: they are not counted,
+    not served, and no sweep can reclaim them. ``purge`` is accepted for older clients
+    and changes nothing. Keeping everything is what "Make inactive" is for.
     """
     feed = await _get_feed_or_404(session, feed_id)
+    del purge
 
-    if purge:
-        episodes = (
-            await session.execute(
-                select(Episode)
-                .options(*without_large_text())
-                .where(Episode.feed_id == feed.id)
-                .where(Episode.local_path.is_not(None))
-            )
-        ).scalars().all()
-        for episode in episodes:
-            await purge_episode(session, episode, reason="manual")
+    episodes = (
+        await session.execute(
+            select(Episode)
+            .options(*without_large_text())
+            .where(Episode.feed_id == feed.id)
+            .where(Episode.local_path.is_not(None))
+        )
+    ).scalars().all()
+    for episode in episodes:
+        await purge_episode(session, episode, reason="manual")
 
     # Leave a tombstone before the row goes, or a synced client has no way to learn this
     # happened -- the feed just stops appearing in deltas, which looks like "unchanged".
