@@ -250,3 +250,61 @@ class TestThePublishedPlaceholderIsRefused:
             check_secret_key(placeholder)
         with pytest.raises(RuntimeError, match="SECRET_KEY"):
             check_secret_key(SimpleNamespace(secret_key="", run_background_jobs=True))
+
+
+
+class TestTheConnectionGoesWhereTheCheckLooked:
+    """DNS rebinding: the check resolves a name and the connection resolves it again. A
+    publisher's DNS can answer the two differently. The backend resolves at connect time
+    and opens the socket to the very address it inspected."""
+
+    @pytest.fixture
+    def opened(self, monkeypatch):
+        import httpcore
+
+        targets: list[str] = []
+
+        async def fake_connect(self, host, port, timeout=None, local_address=None, socket_options=None):
+            targets.append(host)
+            return object()
+
+        monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", fake_connect)
+        return targets
+
+    async def test_a_private_answer_at_connect_time_is_refused(self, monkeypatch, opened):
+        import httpcore
+
+        from podarium.clients import http as outbound
+
+        async def rebinding(host, port):
+            return ["93.184.216.34", "192.168.1.30"]
+
+        monkeypatch.setattr(outbound, "_resolve", rebinding)
+        with pytest.raises(httpcore.ConnectError, match="192.168.1.30"):
+            await outbound._PinnedBackend().connect_tcp("feeds.example", 443)
+        assert opened == [], "no socket was opened"
+
+    async def test_the_socket_opens_to_the_checked_address(self, monkeypatch, opened):
+        from podarium.clients import http as outbound
+
+        async def public(host, port):
+            return ["93.184.216.34"]
+
+        monkeypatch.setattr(outbound, "_resolve", public)
+        await outbound._PinnedBackend().connect_tcp("feeds.example", 443)
+        assert opened == ["93.184.216.34"], "connected to the address inspected, not to the name"
+
+    async def test_a_private_literal_is_refused_at_the_socket_too(self, opened):
+        import httpcore
+
+        from podarium.clients import http as outbound
+
+        with pytest.raises(httpcore.ConnectError):
+            await outbound._PinnedBackend().connect_tcp("10.0.0.7", 80)
+        assert opened == []
+
+    async def test_the_guarded_client_uses_the_pinned_transport(self, guard_on):
+        from podarium.clients import http as outbound
+
+        async with outbound.build_client("test") as client:
+            assert isinstance(client._transport, outbound._PinnedTransport)

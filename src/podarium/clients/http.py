@@ -2,6 +2,7 @@ import asyncio
 import ipaddress
 import socket
 
+import httpcore
 import httpx
 
 from podarium.config import get_settings
@@ -51,9 +52,11 @@ async def _refuse_private_targets(request: httpx.Request) -> None:
     catches those spellings and the plain case of a hostname that points inside the
     network, at the price of one lookup the resolver caches anyway.
 
-    What this still does not close is DNS rebinding proper: an answer that changes between
-    this lookup and the connection a moment later. Pinning the resolved address into the
-    transport is the cure, and more machinery than a single-user server warrants.
+    This is the early, cheap refusal. The binding one is _PinnedBackend below: the
+    address checked here is not necessarily the address connected to a moment later,
+    because the connection does its own lookup, and a publisher who controls their DNS
+    can answer differently the second time. The backend resolves once and connects to
+    exactly what it checked.
     """
     host = request.url.host.strip("[]")
     if host.lower() in _LOCAL_NAMES:
@@ -81,6 +84,64 @@ async def _refuse_private_targets(request: httpx.Request) -> None:
             )
 
 
+class _PinnedBackend(httpcore.AnyIOBackend):
+    """Connect only to an address that has just been checked.
+
+    The hook above resolves a name and inspects the answers; the connection then resolved
+    the name again for itself, and nothing tied the two together. A DNS server the
+    publisher runs can hand the check a public address and the connection a private one
+    -- rebinding -- and the check has then guarded nothing. Here the lookup happens at
+    connect time, every answer is checked, and the socket is opened to the first one, so
+    the address inspected is the address used. TLS still verifies against the hostname:
+    httpcore passes it as the SNI name separately from where the socket goes.
+    """
+
+    async def connect_tcp(self, host: str, port: int, timeout=None, local_address=None, socket_options=None):
+        bare = host.strip("[]")
+        try:
+            literal = ipaddress.ip_address(bare)
+        except ValueError:
+            literal = None
+
+        if literal is not None:
+            if _is_disallowed(literal):
+                raise httpcore.ConnectError(f"refusing to connect to {host}")
+            target = bare
+        else:
+            addresses = await _resolve(bare, port)
+            for resolved in addresses:
+                try:
+                    address = ipaddress.ip_address(resolved)
+                except ValueError:
+                    continue
+                if _is_disallowed(address):
+                    raise httpcore.ConnectError(
+                        f"refusing to connect to {host} (resolves to {resolved})"
+                    )
+            # The test resolver answers nothing; a real one raises when it cannot answer.
+            target = addresses[0] if addresses else bare
+
+        return await super().connect_tcp(
+            target, port, timeout=timeout, local_address=local_address, socket_options=socket_options
+        )
+
+
+class _PinnedTransport(httpx.AsyncHTTPTransport):
+    """httpx's transport over a pool that connects through _PinnedBackend."""
+
+    def __init__(self, *, limits: httpx.Limits) -> None:
+        super().__init__(limits=limits)
+        self._pool = httpcore.AsyncConnectionPool(
+            ssl_context=httpx.create_ssl_context(),
+            max_connections=limits.max_connections,
+            max_keepalive_connections=limits.max_keepalive_connections,
+            keepalive_expiry=limits.keepalive_expiry,
+            http1=True,
+            http2=False,
+            network_backend=_PinnedBackend(),
+        )
+
+
 def build_client(
     user_agent: str, *, follow_redirects: bool = True, guard_private: bool = True
 ) -> httpx.AsyncClient:
@@ -100,9 +161,11 @@ def build_client(
     settings = get_settings()
     guarded = guard_private and not settings.allow_private_fetch
     hooks = {"request": [_refuse_private_targets]} if guarded else {}
+    limits = httpx.Limits(max_connections=20, max_keepalive_connections=5)
     return httpx.AsyncClient(
         headers={"User-Agent": user_agent},
         timeout=httpx.Timeout(settings.http_timeout_seconds, read=settings.http_timeout_seconds),
         follow_redirects=follow_redirects,
         event_hooks=hooks,
+        transport=_PinnedTransport(limits=limits) if guarded else None,
     )
