@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import { EpisodeRow } from "../components/EpisodeRow";
-import { Empty, ErrorNotice, Loading } from "../components/Loading";
+import { Empty, ErrorNotice, LoadMore, Loading } from "../components/Loading";
 import { clearBadge } from "../lib/badge";
 import { useDebounced } from "../lib/debounce";
 import { isNewArrival } from "../lib/newness";
-import { useEpisodes, useFeedActions, useFeeds, useQueue } from "../lib/queries";
+import { useEpisodePages, useFeedActions, useFeeds, useQueue } from "../lib/queries";
 
 type Filter = "all" | "unplayed" | "in_progress" | "downloaded";
 
@@ -33,7 +33,7 @@ export function InboxPage() {
   const [query, setQuery] = useState("");
   const search = useDebounced(query, 250);
 
-  const { data, isLoading, error } = useEpisodes({
+  const { items, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } = useEpisodePages({
     limit: 100,
     unplayed: filter === "unplayed" ? true : undefined,
     in_progress: filter === "in_progress" ? true : undefined,
@@ -102,7 +102,7 @@ export function InboxPage() {
         <Loading label="Loading episodes" />
       ) : error ? (
         <ErrorNotice error={error} />
-      ) : !data || data.items.length === 0 ? (
+      ) : items.length === 0 ? (
         <Empty title="Nothing here">
           <p>
             {search.trim()
@@ -116,7 +116,7 @@ export function InboxPage() {
         </Empty>
       ) : (
         <div className="episode-list">
-          {data.items.map((episode) => (
+          {items.map((episode) => (
             <EpisodeRow
               key={episode.id}
               episode={episode}
@@ -126,6 +126,7 @@ export function InboxPage() {
               isNew={isNewArrival(episode, feedsById.get(episode.feed_id))}
             />
           ))}
+          <LoadMore hasMore={hasNextPage} loading={isFetchingNextPage} onMore={() => void fetchNextPage()} />
         </div>
       )}
     </>

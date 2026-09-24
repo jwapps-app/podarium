@@ -4,11 +4,11 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Artwork } from "../components/Artwork";
 import { EpisodeRow } from "../components/EpisodeRow";
 import { RefreshIcon } from "../components/Icons";
-import { Empty, ErrorNotice, Loading } from "../components/Loading";
+import { Empty, ErrorNotice, LoadMore, Loading } from "../components/Loading";
 import { formatRelativeExact } from "../lib/format";
 import { isNewArrival } from "../lib/newness";
 import { PLAYBACK_RATES } from "../lib/player";
-import { useEpisodes, useFeed, useFeedActions, useQueue, useSettings } from "../lib/queries";
+import { useEpisodePages, useFeed, useFeedActions, useQueue, useSettings } from "../lib/queries";
 import { toPlainText } from "../lib/sanitize";
 import type { RetentionMode } from "../lib/types";
 
@@ -25,7 +25,7 @@ export function FeedDetailPage() {
   const [showUnplayedOnly, setShowUnplayedOnly] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
-  const { data: episodes } = useEpisodes({
+  const { items: episodes, hasNextPage, fetchNextPage, isFetchingNextPage } = useEpisodePages({
     feed_id: feedId,
     limit: 100,
     unplayed: showUnplayedOnly ? true : undefined,
@@ -155,13 +155,13 @@ export function FeedDetailPage() {
         </button>
       </div>
 
-      {!episodes || episodes.items.length === 0 ? (
+      {episodes.length === 0 ? (
         <Empty title="No episodes">
           <p>Try refreshing the feed.</p>
         </Empty>
       ) : (
         <div className="episode-list">
-          {episodes.items.map((episode) => (
+          {episodes.map((episode) => (
             <EpisodeRow
               key={episode.id}
               episode={episode}
@@ -170,6 +170,7 @@ export function FeedDetailPage() {
               isNew={isNewArrival(episode, feed)}
             />
           ))}
+          <LoadMore hasMore={hasNextPage} loading={isFetchingNextPage} onMore={() => void fetchNextPage()} />
         </div>
       )}
     </>

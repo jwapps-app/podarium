@@ -1,6 +1,6 @@
 import { EpisodeRow } from "../components/EpisodeRow";
-import { Empty, ErrorNotice, Loading } from "../components/Loading";
-import { useEpisodes, useFeeds, useQueue } from "../lib/queries";
+import { Empty, ErrorNotice, LoadMore, Loading } from "../components/Loading";
+import { useEpisodePages, useFeeds, useQueue } from "../lib/queries";
 
 /** Everything you have starred, across every show.
  *
@@ -8,7 +8,8 @@ import { useEpisodes, useFeeds, useQueue } from "../lib/queries";
  *  unsubscribing should not quietly empty the list.
  */
 export function StarredPage() {
-  const { data, isLoading, error } = useEpisodes({ starred: true, limit: 200 });
+  const { items, isLoading, error, hasNextPage, fetchNextPage, isFetchingNextPage } =
+    useEpisodePages({ starred: true, limit: 200 });
   const { data: feeds } = useFeeds();
   const { data: queue } = useQueue();
 
@@ -30,7 +31,7 @@ export function StarredPage() {
         <Loading label="Loading starred episodes" />
       ) : error ? (
         <ErrorNotice error={error} />
-      ) : !data || data.items.length === 0 ? (
+      ) : items.length === 0 ? (
         <Empty title="Nothing starred yet">
           <p>
             Star an episode to keep it. Its audio stays on disk whatever the retention
@@ -39,7 +40,7 @@ export function StarredPage() {
         </Empty>
       ) : (
         <div className="episode-list">
-          {data.items.map((episode) => (
+          {items.map((episode) => (
             <EpisodeRow
               key={episode.id}
               episode={episode}
@@ -48,6 +49,7 @@ export function StarredPage() {
               queued={queuedIds.has(episode.id)}
             />
           ))}
+          <LoadMore hasMore={hasNextPage} loading={isFetchingNextPage} onMore={() => void fetchNextPage()} />
         </div>
       )}
     </>

@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMemo } from "react";
 
 import { api } from "./api";
 import type { EpisodeFilters } from "./types";
@@ -29,6 +30,25 @@ export function useEpisodes(filters: EpisodeFilters) {
     queryKey: ["episodes", filters],
     queryFn: () => api.episodes(filters),
   });
+}
+
+/** A listing that continues past its first page.
+ *
+ *  The server pages by cursor and the single-query hook above ignored it, so every list
+ *  stopped at its first hundred rows with no sign that more existed. */
+export function useEpisodePages(filters: EpisodeFilters) {
+  const query = useInfiniteQuery({
+    queryKey: ["episodes", filters],
+    queryFn: ({ pageParam }) =>
+      api.episodes({ ...filters, cursor: pageParam || undefined }),
+    initialPageParam: "",
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  });
+  const items = useMemo(
+    () => query.data?.pages.flatMap((page) => page.items) ?? [],
+    [query.data],
+  );
+  return { ...query, items };
 }
 
 export function useQueue() {
