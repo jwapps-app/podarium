@@ -12,6 +12,8 @@ off, which would otherwise mean re-downloading a library to undo a preference.
 from __future__ import annotations
 
 import asyncio
+import re
+import json
 import logging
 import shutil
 from datetime import UTC, datetime, timedelta
@@ -272,7 +274,16 @@ async def process_episode(
         # simply goes unreported for that episode.
         episode.source_duration_seconds = source_duration
         episode.processed_duration_seconds = processed_duration
-        await _rescale_positions(session, episode)
+        # The map between the two clocks. Positions are stored on the original's clock
+        # whatever is playing (see timeline.py), so nothing here moves them; this is what
+        # translates them for the trimmed copy, exactly rather than proportionally.
+        removed = await measure_removed(source) if trim else []
+        if removed is not None and map_is_credible(removed, source_duration, processed_duration):
+            episode.trim_map_json = json.dumps([[round(s, 3), round(e, 3)] for s, e in removed])
+        else:
+            episode.trim_map_json = None
+            if trim:
+                log.info("episode %s: silence map not credible; positions scale by ratio", episode.id)
         await session.commit()
 
         elapsed = (datetime.now(UTC) - started).total_seconds()
@@ -375,13 +386,6 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
             continue
         episode.source_duration_seconds = await measure_duration(source)
         episode.processed_duration_seconds = await measure_duration(target)
-        # Rescale here too, not only where the encoding happens.
-        #
-        # An episode reaching this branch was processed without its durations being
-        # recorded, so the rescale at that point had nothing to divide and did nothing --
-        # and its saved position has been pointing into the untrimmed timeline ever since.
-        # Learning the durations is exactly the moment that becomes fixable.
-        await _rescale_positions(session, episode)
         measured += 1
 
     if measured:
@@ -428,57 +432,62 @@ async def processing_loop(stop: asyncio.Event, idle_seconds: int = 300) -> None:
             pass
 
 
-async def _rescale_positions(session: AsyncSession, episode: Episode) -> None:
-    """Move saved positions onto the trimmed timeline.
+_SILENCE_LINE = re.compile(r"silence_(start|end): ([0-9.]+)")
 
-    An episode is listenable as soon as it downloads -- streaming serves the original until
-    a processed copy exists -- so someone can be part way through when trimming finishes.
-    The file then changes underneath them, and a position recorded against the original
-    points somewhere later in the trimmed one: eleven percent shorter means eleven percent
-    further through the content, several minutes skipped without a word.
 
-    Scaled proportionally, which assumes silence is spread evenly and is not exactly true.
-    But the error is a fraction of the removed silence, where doing nothing is the whole of
-    it, and the alternative -- refusing to trim anything already started -- gives up the
-    feature for exactly the episodes being listened to.
+def parse_silences(stderr: str) -> list[tuple[float, float]]:
+    """(start, end) of every silence ffmpeg's silencedetect reported, in file seconds."""
+    silences: list[tuple[float, float]] = []
+    open_start: float | None = None
+    for kind, value in _SILENCE_LINE.findall(stderr):
+        if kind == "start":
+            open_start = float(value)
+        elif open_start is not None:
+            silences.append((open_start, float(value)))
+            open_start = None
+    return silences
 
-    Applies at most once per position, which matters because this runs from two places:
-    when a file is encoded, and again when a file encoded earlier finally gets measured.
-    A row updated at or after the episode was processed has either been rescaled already
-    or been written since by playback, and is on the trimmed timeline either way; shrinking
-    it again would take the same tenth off twice.
-    """
-    source = episode.source_duration_seconds
-    processed = episode.processed_duration_seconds
-    if not source or not processed or source <= 0:
-        return
 
-    ratio = processed / source
-    if ratio >= 1:
-        return
+def removed_from_silences(silences: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """What silenceremove cuts from each detected silence: everything past the kept beat."""
+    return [
+        (start + SILENCE_KEEP_SECONDS, end)
+        for start, end in silences
+        if end - start > SILENCE_KEEP_SECONDS
+    ]
 
-    query = (
-        select(EpisodeState)
-        .where(EpisodeState.episode_id == episode.id)
-        .where(EpisodeState.position_seconds > 0)
-    )
-    if episode.processed_at is not None:
-        query = query.where(EpisodeState.updated_at < episode.processed_at)
 
-    states = (await session.execute(query)).scalars().all()
-
-    for state in states:
-        moved = int(state.position_seconds * ratio)
-        log.info(
-            "episode %s trimmed: moving saved position %ss -> %ss",
-            episode.id,
-            state.position_seconds,
-            moved,
+async def measure_removed(source: Path) -> list[tuple[float, float]] | None:
+    """The stretches the silence filter removes from a file, by asking silencedetect with
+    the filter's own threshold and minimum. None if ffmpeg could not say."""
+    try:
+        returncode, _, stderr = await _run(
+            [
+                "ffmpeg", "-nostats", "-hide_banner",
+                "-i", str(source),
+                "-af", f"silencedetect=noise={SILENCE_THRESHOLD_DB}dB:d={MIN_SILENCE_SECONDS}",
+                "-f", "null", "-",
+            ],
+            timeout=PROCESS_TIMEOUT_SECONDS,
+            stderr=asyncio.subprocess.PIPE,
         )
-        state.position_seconds = moved
+    except (TimeoutError, OSError):
+        return None
+    if returncode != 0:
+        return None
+    return removed_from_silences(parse_silences(stderr.decode(errors="replace")))
 
-    if states:
-        await session.commit()
+
+def map_is_credible(
+    removed: list[tuple[float, float]], source_duration: float | None, processed_duration: float | None
+) -> bool:
+    """Whether the detected cuts account for the length that actually went. Detection and
+    removal are two filters with the same settings, but they are two filters; when they
+    disagree by more than a couple of seconds the proportional estimate is the safer map."""
+    if not source_duration or processed_duration is None:
+        return False
+    expected = source_duration - sum(end - start for start, end in removed)
+    return abs(expected - processed_duration) <= max(2.0, 0.02 * source_duration)
 
 
 def drop_processed(episode: Episode) -> None:
@@ -488,5 +497,6 @@ def drop_processed(episode: Episode) -> None:
     episode.processed_path = None
     episode.processed_bytes = None
     episode.processed_recipe = None
+    episode.trim_map_json = None
     episode.processed_at = None
     episode.processed_duration_seconds = None

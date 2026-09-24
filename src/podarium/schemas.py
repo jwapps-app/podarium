@@ -8,10 +8,13 @@ audio as ``/api/stream/...``; both are server-mediated.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from podarium import timeline
 from podarium.models import Episode, Feed, RetentionMode
 from podarium.streaming import audio_duration_seconds, stream_url
 
@@ -199,6 +202,8 @@ class EpisodeOut(BaseModel):
     downloaded_at: datetime | None
     purged_at: datetime | None
     stream_url: str
+    # The copy stream_url names ("o" or "p"), which is the clock position_seconds is on.
+    audio_version: str = "o"
     played: bool = False
     position_seconds: int = 0
     # Measured, not inferred: see EpisodeState.listened_seconds.
@@ -233,6 +238,11 @@ class EpisodeListOut(BaseModel):
 class EpisodeStateUpdate(BaseModel):
     played: bool | None = None
     position_seconds: int | None = Field(default=None, ge=0)
+    # Which copy the position was heard on: "o" for the original, "p" for the trimmed
+    # copy, as the stream URL's v= names it. Absent means the copy served today, which
+    # is what every client sent before this existed. A player still on the original
+    # after trimming finished used to have its seconds read as trimmed ones.
+    audio_version: Literal["o", "p"] | None = None
     # Seconds of audio played since the last report, to be added to the running total.
     # A delta rather than a total because two devices can play the same episode and both
     # have listened to it -- their contributions add up, where a total would overwrite.
@@ -433,8 +443,9 @@ def episode_out(episode: Episode, state=None) -> EpisodeOut:
         downloaded_at=episode.downloaded_at,
         purged_at=episode.purged_at,
         stream_url=stream_url(episode),
+        audio_version=timeline.served_version(episode),
         played=bool(state.played) if state else False,
-        position_seconds=int(state.position_seconds) if state else 0,
+        position_seconds=timeline.outbound(episode, state.position_seconds) if state else 0,
         listened_seconds=int(state.listened_seconds) if state else 0,
         completed_at=state.completed_at if state else None,
         last_played_at=state.last_played_at if state else None,

@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from "react";
 
 import { api } from "./api";
+import { audioVersion } from "./audioVersion";
 import { sponsorSkipTarget } from "./chapters";
 import { shouldHonorPlatformResume, useMediaSession } from "./mediaSession";
 import type { Chapter, Episode } from "./types";
@@ -203,6 +204,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       api
         .setState(current.id, {
           position_seconds: rounded,
+          // The clock this second is on: the copy the element is actually playing, which
+          // is the URL it was cued with -- not whatever the server would serve now.
+          audio_version: audioVersion(current.stream_url),
           ...(listened > 0 ? { listened_delta: listened } : {}),
           ...(options.played === undefined ? {} : { played: options.played }),
         })
@@ -734,6 +738,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           position_seconds: Math.floor(audio.currentTime),
+          audio_version: audioVersion(current.stream_url),
           ...(listened > 0 ? { listened_delta: listened } : {}),
           // Sent whenever the browser gets to it; without a date it would arrive as "now"
           // and overwrite whatever happened in between.

@@ -242,6 +242,11 @@ class Episode(Base):
     # so a changed setting is noticed and the file rebuilt. Without it, switching from
     # trimming to levelling left the trimmed file in place, still being served.
     processed_recipe: Mapped[str | None] = mapped_column(String(32))
+    # The stretches trimming removed, as JSON [[start, end], ...] in original seconds.
+    # This is what lets a position on the trimmed clock be stored on the original's and
+    # handed back on either (see timeline.py). NULL for a copy made before maps existed,
+    # or when the detected silences did not add up to the length actually removed.
+    trim_map_json: Mapped[str | None] = mapped_column(Text)
 
     # Both measured from the files, not taken from the feed. duration_seconds above is what
     # the publisher claims, which is frequently wrong and sometimes absent; subtracting one

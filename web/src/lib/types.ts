@@ -92,6 +92,9 @@ export interface Episode {
   purged_at: string | null;
   /** Always an /api/stream path. */
   stream_url: string;
+  /** Which copy stream_url names: "o" (original) or "p" (trimmed). The clock
+   *  position_seconds is on. */
+  audio_version?: "o" | "p";
   played: boolean;
   position_seconds: number;
   completed_at: string | null;

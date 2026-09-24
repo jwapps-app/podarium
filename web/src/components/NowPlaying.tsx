@@ -8,6 +8,7 @@ import { formatClock, formatDate, formatDuration } from "../lib/format";
 import { PLAYBACK_RATES, usePlayer, usePlayerProgress } from "../lib/player";
 import { useEpisodeActions, useFeeds, useQueue } from "../lib/queries";
 import { sanitizeHtml } from "../lib/sanitize";
+import { audioVersion } from "../lib/audioVersion";
 import { podlinkEpisodeUrl } from "../lib/share";
 import { Artwork } from "./Artwork";
 import { Scrubber } from "./Scrubber";
@@ -245,7 +246,11 @@ export function NowPlaying() {
             >
               {live!.downloaded ? <TrashIcon /> : <DownloadIcon />}
             </button>
-            <BookmarkButton episodeId={episode.id} position={progress.position} />
+            <BookmarkButton
+              episodeId={episode.id}
+              position={progress.position}
+              version={audioVersion(episode.stream_url)}
+            />
 
             {shareUrl ? (
               <ShareButton
@@ -412,13 +417,25 @@ function ChapterList({ episodeId }: { episodeId: number }) {
  *  and a timestamp with no note is still enough to find it again. The note is added
  *  afterwards, from the list, if it is worth one.
  */
-function BookmarkButton({ episodeId, position }: { episodeId: number; position: number }) {
+function BookmarkButton({
+  episodeId,
+  position,
+  version,
+}: {
+  episodeId: number;
+  position: number;
+  version: "o" | "p" | undefined;
+}) {
   const queryClient = useQueryClient();
   const [justAdded, setJustAdded] = useState(false);
 
   const add = useMutation({
     mutationFn: () =>
-      api.addBookmark({ episode_id: episodeId, position_seconds: Math.floor(position) }),
+      api.addBookmark({
+        episode_id: episodeId,
+        position_seconds: Math.floor(position),
+        audio_version: version,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["bookmarks"] });
       setJustAdded(true);

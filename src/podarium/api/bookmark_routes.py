@@ -7,11 +7,14 @@ back to it short of scrubbing through three hours.
 
 from datetime import UTC, datetime
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from podarium import timeline
 from podarium.auth import current_user
 from podarium.db import get_session
 from podarium.models import Bookmark, Episode, User
@@ -23,6 +26,8 @@ router = APIRouter(prefix="/api/bookmarks", tags=["bookmarks"])
 class BookmarkCreate(BaseModel):
     episode_id: int
     position_seconds: int = Field(ge=0)
+    # Which copy it was heard on; see EpisodeStateUpdate.audio_version.
+    audio_version: Literal["o", "p"] | None = None
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -34,7 +39,12 @@ def _out(bookmark: Bookmark, episode: Episode | None = None) -> BookmarkOut:
     return BookmarkOut(
         id=bookmark.id,
         episode_id=bookmark.episode_id,
-        position_seconds=bookmark.position_seconds,
+        # Stored on the original's clock; handed out on the served copy's.
+        position_seconds=(
+            timeline.outbound(episode, bookmark.position_seconds)
+            if episode is not None
+            else bookmark.position_seconds
+        ),
         note=bookmark.note,
         created_at=bookmark.created_at,
         episode_title=episode.title if episode else None,
@@ -94,7 +104,7 @@ async def create_bookmark(
     bookmark = Bookmark(
         user_id=user.id,
         episode_id=body.episode_id,
-        position_seconds=body.position_seconds,
+        position_seconds=timeline.inbound(episode, body.position_seconds, body.audio_version),
         note=body.note,
     )
     session.add(bookmark)

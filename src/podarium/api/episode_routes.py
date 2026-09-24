@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from podarium import timeline
 from podarium.auth import current_user
 from podarium.chapters import ensure_chapters
 from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
@@ -276,10 +277,11 @@ async def get_chapters(
     episode = await _get_episode_or_404(session, episode_id)
     app_settings = await get_app_settings(session)
     chapters = await ensure_chapters(session, episode, user_agent=app_settings.user_agent)
+    # Publisher chapters are on the original's clock; the player is on the served copy's.
     return ChaptersOut(
         chapters=[
             ChapterOut(
-                start_seconds=chapter.start_seconds,
+                start_seconds=float(timeline.outbound(episode, chapter.start_seconds) or 0),
                 title=chapter.title,
                 sponsor=chapter.sponsor,
             )
@@ -389,7 +391,8 @@ async def update_state(
         if body.played:
             await drop_from_queue(session, user.id, [episode.id])
     if body.position_seconds is not None:
-        state.position_seconds = body.position_seconds
+        # Stored on the original's clock, whichever copy it was heard on.
+        state.position_seconds = timeline.inbound(episode, body.position_seconds, body.audio_version)
         # A position write is the one signal that means "was listening": the player sends
         # it while playing and again on pause. Stamped here rather than on any state write
         # so that starring or marking an old episode cannot pass for listening to it.

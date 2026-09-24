@@ -230,7 +230,14 @@ export const api = {
 
   setState: (
     id: number,
-    body: { played?: boolean; position_seconds?: number; starred?: boolean; listened_delta?: number },
+    body: {
+      played?: boolean;
+      position_seconds?: number;
+      starred?: boolean;
+      listened_delta?: number;
+      /** Which copy a position was heard on; see audioVersion(). */
+      audio_version?: "o" | "p";
+    },
   ) =>
     request<Episode>(`/api/episodes/${id}/state`, {
       method: "PUT",
@@ -275,7 +282,12 @@ export const api = {
   bookmarks: (episodeId?: number) =>
     request<Bookmark[]>(`/api/bookmarks${episodeId ? `?episode_id=${episodeId}` : ""}`),
 
-  addBookmark: (body: { episode_id: number; position_seconds: number; note?: string }) =>
+  addBookmark: (body: {
+    episode_id: number;
+    position_seconds: number;
+    note?: string;
+    audio_version?: "o" | "p";
+  }) =>
     request<Bookmark>("/api/bookmarks", { method: "POST", body: JSON.stringify(body) }),
 
   updateBookmark: (id: number, note: string | null) =>
