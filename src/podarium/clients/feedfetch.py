@@ -74,23 +74,36 @@ def _to_datetime(struct_time) -> datetime | None:
         return None
 
 
+# What the columns can hold. A number past these is not a value, it is a publisher's
+# mistake, and storing it would fail the whole feed's refresh -- every time, with no
+# backoff, because the failure happens after the fetch succeeded.
+INT32_MAX = 2**31 - 1
+INT64_MAX = 2**63 - 1
+
+
+def _bounded(value: int | None, maximum: int) -> int | None:
+    if value is None or value < 0 or value > maximum:
+        return None
+    return value
+
+
 def parse_duration(raw: str | None) -> int | None:
     """iTunes durations arrive as seconds, MM:SS, or HH:MM:SS depending on the publisher."""
     if not raw:
         return None
     raw = str(raw).strip()
     if raw.isdigit():
-        return int(raw)
+        return _bounded(int(raw), INT32_MAX)
     m = _DURATION_RE.match(raw)
     if not m:
         return None
     hours, minutes, seconds = m.groups()
-    return int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds)
+    return _bounded(int(hours or 0) * 3600 + int(minutes) * 60 + int(seconds), INT32_MAX)
 
 
-def _int_or_none(raw) -> int | None:
+def _int_or_none(raw, maximum: int = INT32_MAX) -> int | None:
     try:
-        return int(str(raw).strip())
+        return _bounded(int(str(raw).strip()), maximum)
     except (TypeError, ValueError):
         return None
 
@@ -260,7 +273,7 @@ def parse_feed_bytes(raw: bytes) -> ParsedFeed:
                 duration_seconds=parse_duration(entry.get("itunes_duration")),
                 enclosure_url=enclosure.get("href"),
                 enclosure_type=_short(enclosure.get("type"), MIME_MAX),
-                enclosure_bytes=_int_or_none(enclosure.get("length")),
+                enclosure_bytes=_int_or_none(enclosure.get("length"), INT64_MAX),
                 chapters_url=_chapters_url(entry),
                 transcript_url=transcript[0],
                 transcript_type=_short(transcript[1], MIME_MAX),

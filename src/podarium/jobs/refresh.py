@@ -23,7 +23,7 @@ from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium import push
-from podarium.clients.feedfetch import ParsedEpisode, fetch_feed
+from podarium.clients.feedfetch import ParsedEpisode, fetch_feed, FetchResult
 from podarium.db import get_sessionmaker
 from podarium.jobs.artwork import ensure_feed_artwork
 from podarium.metrics import episodes_discovered_total, feed_refresh_total
@@ -264,6 +264,10 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
     outcome = RefreshOutcome()
     now = datetime.now(UTC)
 
+    # Fetching and storing fail together. Storing used to sit outside this block, so a
+    # feed whose numbers did not fit their columns failed at the flush, after the fetch
+    # had succeeded: nothing recorded the failure, nothing backed off, and the scheduler
+    # tried the same feed again on its next pass, for ever.
     try:
         result = await fetch_feed(
             feed.feed_url,
@@ -271,7 +275,10 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
             etag=feed.etag,
             last_modified=feed.last_modified,
         )
-    except Exception as exc:  # noqa: BLE001 - any transport or parse failure backs the feed off
+        await _apply_result(session, feed, result, outcome, now=now)
+    except Exception as exc:  # noqa: BLE001 - any transport, parse or storage failure backs the feed off
+        await session.rollback()
+        await session.refresh(feed)
         feed.fetch_error = f"{type(exc).__name__}: {exc}"[:1000]
         feed.fetch_error_count += 1
         feed.last_fetched_at = now
@@ -281,6 +288,16 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         log.warning("feed %s refresh failed: %s", feed.id, outcome.error)
         return outcome
 
+    if feed.image_url:
+        await ensure_feed_artwork(session, feed, user_agent=user_agent)
+
+    return outcome
+
+
+async def _apply_result(
+    session: AsyncSession, feed: Feed, result: FetchResult, outcome: RefreshOutcome, *, now: datetime
+) -> None:
+    """Store what a successful fetch returned. Commits."""
     feed.last_fetched_at = now
     feed.fetch_error = None
     feed.fetch_error_count = 0
@@ -295,7 +312,7 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
         await apply_auto_download_window(session, feed)
         await session.commit()
         feed_refresh_total.labels(result="not_modified").inc()
-        return outcome
+        return
 
     if result.etag:
         feed.etag = result.etag
@@ -374,11 +391,6 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
     if outcome.new_episodes:
         episodes_discovered_total.inc(outcome.new_episodes)
     feed_refresh_total.labels(result="success").inc()
-
-    if feed.image_url:
-        await ensure_feed_artwork(session, feed, user_agent=user_agent)
-
-    return outcome
 
 
 def _feed_jitter_seconds(feed_id: int, interval_seconds: int) -> int:
