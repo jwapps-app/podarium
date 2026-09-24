@@ -91,7 +91,7 @@ class TestSyncCarriesBookmarks:
 
     async def test_intermediate_pages_leave_them_out(self, client, session, user, episode):
         # Paging a large backfill repeats nothing that is sent whole; the client gets them
-        # on the final page. Matches how the queue and feeds are already handled.
+        # on the first page. Matches how the queue and feeds are already handled.
         session.add(
             Bookmark(user_id=user.id, episode_id=episode.id, position_seconds=1)
         )

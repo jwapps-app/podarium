@@ -11,7 +11,7 @@
 #
 #  1. Confirm the port is free:
 #         ss -tlnp | grep 8044
-#     8040 is PinePods. If 8044 is taken, change the published port AND PUBLIC_URL below.
+#     8040 is PinePods. If 8044 is taken, change the published port below.
 #
 #  2. Create the data directories and give them to the uid the container runs as:
 #         sudo mkdir -p /home/YOUR_USER/docker/podarium/{pgdata,downloads,artwork}
@@ -28,7 +28,6 @@
 #         LOGIN_PASSWORD       what you will type to sign in
 #         PODCASTINDEX_KEY     from your local .env -- optional
 #         PODCASTINDEX_SECRET  from your local .env -- optional
-#         PUBLIC_URL           optional; defaults to http://192.168.1.30:8044
 #                              set to https://<hostname> once Cloudflare fronts it
 #         PUSH_RELAY_*         optional; the iOS app gets no notifications without them.
 #                              See the note at the end of this file.
@@ -170,7 +169,6 @@ services:
       # scheme of each request, so the same server can be used over both the public
       # hostname and the LAN address without one of them silently failing to stay signed
       # in. It is now only the base for absolute links.
-      PUBLIC_URL: ${PUBLIC_URL:-http://192.168.1.30:8044}
 
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in the environment variables panel}
 

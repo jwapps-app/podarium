@@ -1,8 +1,8 @@
 """Login throttling.
 
 The login form is the only thing between the internet and this server, and it guards a
-single password with no second factor. Without a limit, an attacker gets unlimited guesses
-at whatever rate the network allows.
+single password -- with a second factor only where one has been turned on. Without a
+limit, an attacker gets unlimited guesses at whatever rate the network allows.
 """
 
 from __future__ import annotations

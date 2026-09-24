@@ -33,10 +33,6 @@ from podarium.models import PushSubscription
 
 log = logging.getLogger("podarium")
 
-# How long a signed VAPID claim stays valid. The spec caps this at 24 hours; a shorter life
-# just means re-signing more often, and signing is cheap.
-TTL_SECONDS = 12 * 60 * 60
-
 # How long the push service should hold a message for a device that is offline. A podcast
 # notification a week late is noise, so it expires with the day.
 MESSAGE_TTL = 24 * 60 * 60

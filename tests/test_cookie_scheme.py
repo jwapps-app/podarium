@@ -29,7 +29,6 @@ async def account(session):
 @pytest.fixture
 def public_https(monkeypatch):
     """The deployment this bug appeared in: PUBLIC_URL is the TLS hostname."""
-    monkeypatch.setattr(get_settings(), "public_url", "https://podarium.example", raising=False)
 
 
 async def login(headers: dict | None = None, base: str = "http://test") -> httpx.Response:

@@ -249,7 +249,8 @@ class Episode(Base):
     source_duration_seconds: Mapped[float | None] = mapped_column(Float)
     processed_duration_seconds: Mapped[float | None] = mapped_column(Float)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    # What the original audio was, so a publisher quietly re-cutting it is detectable.
+    # A checksum of the file as downloaded. Recorded, not yet compared: replaced-audio
+    # detection goes by the declared length (see refresh._note_replaced_audio).
     audio_sha256: Mapped[str | None] = mapped_column(String(64))
     # Set when the publisher's copy stops matching the one on disk.
     replaced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
