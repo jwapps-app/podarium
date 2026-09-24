@@ -47,14 +47,20 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-/** Save an episode's audio for offline playback. Reports progress to the page. */
-async function saveEpisode(id) {
+/** Save an episode's audio for offline playback. Reports progress to the page.
+ *
+ *  Saved under the URL the player will ask for, query string included: `?v=o` and
+ *  `?v=p` name different files, and a cache keyed on the path alone handed the original
+ *  back to a player asking for the processed one. */
+async function saveEpisode(id, url) {
   const cache = await caches.open(AUDIO);
-  const url = `/api/stream/${id}`;
+  const key = url || `/api/stream/${id}`;
   // Range-less, so the response is the whole file and can be sliced later.
-  const response = await fetch(url, { credentials: "same-origin" });
+  const response = await fetch(key, { credentials: "same-origin" });
   if (!response.ok) throw new Error(`stream returned ${response.status}`);
-  await cache.put(url, response.clone());
+  // One saved copy per episode, whichever version it is.
+  await forgetEpisode(id);
+  await cache.put(key, response.clone());
   savedIds.add(Number(id));
   return true;
 }
@@ -62,7 +68,12 @@ async function saveEpisode(id) {
 async function forgetEpisode(id) {
   const cache = await caches.open(AUDIO);
   savedIds.delete(Number(id));
-  return cache.delete(`/api/stream/${id}`);
+  const keys = await cache.keys();
+  await Promise.all(
+    keys
+      .filter((request) => new URL(request.url).pathname === `/api/stream/${id}`)
+      .map((request) => cache.delete(request)),
+  );
 }
 
 async function savedEpisodeIds() {
@@ -74,12 +85,12 @@ async function savedEpisodeIds() {
 }
 
 self.addEventListener("message", (event) => {
-  const { type, id } = event.data || {};
+  const { type, id, url } = event.data || {};
   const reply = (payload) => event.source && event.source.postMessage(payload);
 
   if (type === "save-episode") {
     event.waitUntil(
-      saveEpisode(id)
+      saveEpisode(id, url)
         .then(() => reply({ type: "saved", id }))
         .catch((error) => reply({ type: "save-failed", id, message: String(error) })),
     );
@@ -97,8 +108,11 @@ self.addEventListener("message", (event) => {
  *  question the player did not ask, and seeking would break.
  */
 async function rangeFromCache(cached, rangeHeader) {
-  const buffer = await cached.arrayBuffer();
-  const total = buffer.byteLength;
+  // A Blob, not an ArrayBuffer: slicing a Blob is a view onto storage, while arrayBuffer()
+  // read the whole episode into memory for every probe and every seek -- a three-hour
+  // file, several times over, on a phone.
+  const blob = await cached.blob();
+  const total = blob.size;
 
   const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
   if (!match) return new Response(null, { status: 416 });
@@ -123,7 +137,7 @@ async function rangeFromCache(cached, rangeHeader) {
     });
   }
 
-  return new Response(buffer.slice(start, end + 1), {
+  return new Response(blob.slice(start, end + 1), {
     status: 206,
     headers: {
       "Content-Type": cached.headers.get("Content-Type") || "audio/mpeg",
@@ -158,7 +172,9 @@ self.addEventListener("fetch", (event) => {
     // It was a guess made while chasing a seek fault that turned out to be a CSS width.)
     event.respondWith(
       (async () => {
-        const cached = await caches.match(url.pathname, { cacheName: AUDIO });
+        // The exact version asked for. A saved original is not an answer to a request
+        // for the processed file, so that goes to the network like any unsaved episode.
+        const cached = await caches.match(url.pathname + url.search, { cacheName: AUDIO });
         if (!cached) return fetch(request);
         const range = request.headers.get("Range");
         return range ? rangeFromCache(cached, range) : cached;

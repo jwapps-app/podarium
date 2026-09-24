@@ -43,8 +43,9 @@ function ask<T>(message: object, matches: (data: any) => boolean, timeoutMs = 30
   });
 }
 
-export async function saveEpisode(id: number): Promise<void> {
-  await ask({ type: "save-episode", id }, (data) => data?.id === id && data?.type !== "saved-list");
+/** `url` is the stream path the player uses for this episode, version and all. */
+export async function saveEpisode(id: number, url: string): Promise<void> {
+  await ask({ type: "save-episode", id, url }, (data) => data?.id === id && data?.type !== "saved-list");
 }
 
 export async function forgetEpisode(id: number): Promise<void> {

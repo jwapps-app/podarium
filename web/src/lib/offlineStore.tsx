@@ -8,7 +8,7 @@ interface OfflineContextValue {
   saved: Set<number>;
   /** Episodes with a save in flight, so a row can show progress. */
   pending: Set<number>;
-  save: (id: number) => Promise<void>;
+  save: (id: number, url: string) => Promise<void>;
   forget: (id: number) => Promise<void>;
   error: string | null;
 }
@@ -55,11 +55,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
 
-  const save = useCallback(async (id: number) => {
+  const save = useCallback(async (id: number, url: string) => {
     setError(null);
     mark(id, true);
     try {
-      await saveEpisode(id);
+      await saveEpisode(id, url);
       setSaved((current) => new Set(current).add(id));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));

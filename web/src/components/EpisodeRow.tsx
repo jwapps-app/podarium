@@ -187,7 +187,9 @@ export function EpisodeRow({ episode, showTitle, feedUrl, queued, isNew }: Props
             title={onDevice ? "Remove from this device" : "Keep on this device for offline"}
             aria-label={onDevice ? "Remove from this device" : "Keep on this device"}
             disabled={savePending}
-            onClick={() => (onDevice ? offline.forget(episode.id) : offline.save(episode.id))}
+            onClick={() =>
+              onDevice ? offline.forget(episode.id) : offline.save(episode.id, episode.stream_url)
+            }
           >
             {savePending ? <span className="spinner" /> : <DeviceIcon />}
           </button>
