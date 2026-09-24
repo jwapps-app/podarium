@@ -135,3 +135,34 @@ async def test_starring_offline_is_declined_if_overtaken(client):
     result = await put(client, starred=False, changed_at=stale)
 
     assert result["starred"] is True
+
+
+async def test_a_batch_of_offline_edits_lands_in_order(client):
+    """An hour offline is an hour of queued writes, flushed at once. Each is judged
+    against when the previous one was *made*, not when it arrived a moment ago --
+    otherwise only the first survives and the position kept is the one from the moment
+    the signal dropped."""
+    start = datetime.now(UTC) - timedelta(hours=1)
+
+    await put(client, position_seconds=60, changed_at=start.isoformat())
+    await put(client, position_seconds=600, changed_at=(start + timedelta(minutes=10)).isoformat())
+    result = await put(
+        client, position_seconds=1800, changed_at=(start + timedelta(minutes=30)).isoformat()
+    )
+
+    assert result["position_seconds"] == 1800
+
+
+async def test_an_offline_batch_still_loses_to_newer_work_elsewhere(client):
+    """The order guarantee must not weaken the original rule."""
+    start = datetime.now(UTC) - timedelta(hours=1)
+    await put(client, position_seconds=60, changed_at=start.isoformat())
+
+    # The desktop finishes it in the meantime.
+    await put(client, played=True, position_seconds=3600)
+
+    result = await put(
+        client, position_seconds=1800, changed_at=(start + timedelta(minutes=30)).isoformat()
+    )
+    assert result["played"] is True
+    assert result["position_seconds"] == 3600

@@ -278,6 +278,15 @@ class EpisodeState(Base):
     # episode from six months ago would otherwise jump it above the one paused ten minutes
     # ago. NULL means never played, only ever starred or marked.
     last_played_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    # When the change this row describes was *made*, by the client's account, clamped to
+    # the server's now. Conflicts are judged against this, not updated_at.
+    #
+    # They differ whenever a write arrives late. A phone offline for an hour flushes an
+    # hour of writes at once; judged against updated_at -- the arrival time of the previous
+    # one -- every write after the first looked stale and was thrown away, and the position
+    # that survived was the one from the moment the signal dropped. NULL for rows written
+    # before this existed, which conflict checks read as updated_at.
+    changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Drives delta sync.
     updated_at: Mapped[datetime] = _now_col(nullable=False, onupdate=func.now(), index=True)
 

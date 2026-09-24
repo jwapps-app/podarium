@@ -343,7 +343,9 @@ async def update_state(
     if body.listened_delta:
         state.listened_seconds = (state.listened_seconds or 0) + body.listened_delta
 
-    if existed and _is_stale(body.changed_at, state.updated_at):
+    # Judged against when the stored change was made, not when it arrived. See
+    # EpisodeState.changed_at for the offline flush this distinguishes.
+    if existed and _is_stale(body.changed_at, state.changed_at or state.updated_at):
         # Older than what is already stored, so it describes a moment that has since been
         # overtaken. Returning the current state rather than an error lets the client
         # correct its own copy from the reply instead of handling a failure path.
@@ -376,6 +378,13 @@ async def update_state(
         state.last_played_at = datetime.now(UTC)
     if body.starred is not None:
         state.starred = body.starred
+
+    # The moment this write describes. A write without one is happening now; one from the
+    # future is clamped, as _is_stale clamps it, so a fast clock cannot post-date a row.
+    claimed = body.changed_at
+    if claimed is not None and claimed.tzinfo is None:
+        claimed = claimed.replace(tzinfo=UTC)
+    state.changed_at = min(claimed or datetime.now(UTC), datetime.now(UTC))
 
     await session.commit()
     await session.refresh(state)
