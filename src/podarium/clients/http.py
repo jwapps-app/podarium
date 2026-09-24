@@ -27,10 +27,10 @@ async def _resolve_via_dns(host: str, port: int) -> list[str]:
     loop = asyncio.get_running_loop()
     try:
         infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except socket.gaierror:
-        # Unresolvable. Let the connection fail on its own and say so in its own words;
-        # refusing here would report every typo as a security decision.
-        return []
+    except socket.gaierror as exc:
+        # Unresolvable. The connection would fail a moment later anyway, so refusing here
+        # costs nothing; waving it through meant a guard that had checked nothing.
+        raise httpx.ConnectError(f"could not resolve {host}: {exc}") from exc
     return [info[4][0] for info in infos]
 
 
