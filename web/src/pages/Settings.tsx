@@ -655,6 +655,11 @@ function NotificationsPanel() {
   const { data: config } = useQuery({ queryKey: ["push-config"], queryFn: api.pushConfig });
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Whether *this browser* holds a subscription. The server's `subscribed` says whether
+  // any device does, which is the wrong question for a switch: a second browser read it
+  // as "on", offered "Turn off", and turning off with nothing local to name deleted every
+  // device's registration -- the phone's included.
+  const [local, setLocal] = useState<PushSubscription | null | undefined>(undefined);
 
   const supported =
     typeof window !== "undefined" &&
@@ -662,6 +667,22 @@ function NotificationsPanel() {
     "serviceWorker" in navigator &&
     "PushManager" in window &&
     window.isSecureContext;
+
+  useEffect(() => {
+    if (!supported) return;
+    let cancelled = false;
+    navigator.serviceWorker.ready
+      .then((registration) => registration.pushManager.getSubscription())
+      .then((subscription) => {
+        if (!cancelled) setLocal(subscription);
+      })
+      .catch(() => {
+        if (!cancelled) setLocal(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [supported]);
 
   const enable = async () => {
     setError(null);
@@ -679,6 +700,7 @@ function NotificationsPanel() {
         applicationServerKey: urlBase64ToUint8Array(config!.public_key!),
       });
       await api.pushSubscribe({ ...describeSubscription(subscription), label: navigator.userAgent.slice(0, 80) });
+      setLocal(subscription);
       await queryClient.invalidateQueries({ queryKey: ["push-config"] });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -693,14 +715,12 @@ function NotificationsPanel() {
     try {
       const registration = await navigator.serviceWorker.ready;
       const subscription = await registration.pushManager.getSubscription();
+      // Only ever this browser's own registration. Other devices are theirs to turn off.
       if (subscription) {
         await subscription.unsubscribe();
         await api.pushUnsubscribe(subscription.endpoint);
-      } else {
-        // No local subscription to name, so clear every device rather than leave rows
-        // behind that nothing can reach.
-        await api.pushUnsubscribe();
       }
+      setLocal(null);
       await queryClient.invalidateQueries({ queryKey: ["push-config"] });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -728,19 +748,26 @@ function NotificationsPanel() {
           <code className="mono">VAPID_PUBLIC_KEY</code> and{" "}
           <code className="mono">VAPID_PRIVATE_KEY</code>.
         </div>
-      ) : config.subscribed ? (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn" disabled={busy} onClick={() => void api.pushTest()}>
-            Send a test
-          </button>
-          <button className="btn btn-danger" disabled={busy} onClick={() => void disable()}>
-            Turn off
-          </button>
+      ) : local === undefined ? null : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {local ? (
+            <button className="btn btn-danger" disabled={busy} onClick={() => void disable()}>
+              Turn off here
+            </button>
+          ) : (
+            <button className="btn" disabled={busy} onClick={() => void enable()}>
+              {busy ? "Enabling…" : "Turn on here"}
+            </button>
+          )}
+          {config.subscribed ? (
+            <button className="btn" disabled={busy} onClick={() => void api.pushTest()}>
+              Send a test
+            </button>
+          ) : null}
+          {!local && config.subscribed ? (
+            <span className="field-hint">Another device is receiving them.</span>
+          ) : null}
         </div>
-      ) : (
-        <button className="btn" disabled={busy} onClick={() => void enable()}>
-          {busy ? "Enabling…" : "Turn on"}
-        </button>
       )}
 
       {error ? (
