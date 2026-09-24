@@ -44,15 +44,18 @@ export function NowPlaying() {
   const episode = player.episode;
   const open = player.expanded && episode !== null;
 
-  // Lists arrive without show notes, so an episode played from one carries none; fetch
-  // the full record when the view is open. Hooks run before the early return below.
+  // The full record, fetched while the view is open. Lists arrive without show notes,
+  // so an episode played from one carries none; and the player's copy is a snapshot
+  // from when it was cued, so star and download state read from it went stale after
+  // the first click. Mutations invalidate ["episode"], which refreshes this.
   const { data: full } = useQuery({
     queryKey: ["episode", episode?.id],
     queryFn: () => api.episode(episode!.id),
-    enabled: open && episode !== null && episode.description_html == null,
-    staleTime: 5 * 60_000,
+    enabled: open && episode !== null,
+    staleTime: 60_000,
   });
   const notesHtml = episode?.description_html ?? full?.description_html;
+  const live = full && episode && full.id === episode.id ? full : episode;
 
   // Same query key as the list in the side panel, so this is one fetch, not two.
   const { data: chapterData } = useQuery({
@@ -132,7 +135,7 @@ export function NowPlaying() {
             <div className="np-sub">
               {formatDate(episode.published_at)}
               {episode.duration_seconds ? ` · ${formatDuration(episode.duration_seconds)}` : ""}
-              {episode.downloaded ? " · downloaded" : " · streaming"}
+              {live!.downloaded ? " · downloaded" : " · streaming"}
             </div>
           </div>
 
@@ -231,16 +234,16 @@ export function NowPlaying() {
               <PlusIcon />
             </button>
             <button
-              className={`btn-icon${episode.downloaded ? " on" : ""}`}
+              className={`btn-icon${live!.downloaded ? " on" : ""}`}
               onClick={() =>
-                episode.downloaded
+                live!.downloaded
                   ? actions.removeDownload.mutate(episode.id)
                   : actions.download.mutate(episode.id)
               }
-              aria-label={episode.downloaded ? "Delete downloaded file" : "Download"}
-              title={episode.downloaded ? "Delete downloaded file" : "Download"}
+              aria-label={live!.downloaded ? "Delete downloaded file" : "Download"}
+              title={live!.downloaded ? "Delete downloaded file" : "Download"}
             >
-              {episode.downloaded ? <TrashIcon /> : <DownloadIcon />}
+              {live!.downloaded ? <TrashIcon /> : <DownloadIcon />}
             </button>
             <BookmarkButton episodeId={episode.id} position={progress.position} />
 
@@ -253,18 +256,18 @@ export function NowPlaying() {
             ) : null}
 
             <button
-              className={`btn-icon${episode.starred ? " on" : ""}`}
-              onClick={() => actions.setState.mutate({ id: episode.id, starred: !episode.starred })}
-              aria-label={episode.starred ? "Unstar" : "Star"}
-              title={episode.starred ? "Unstar" : "Star"}
+              className={`btn-icon${live!.starred ? " on" : ""}`}
+              onClick={() => actions.setState.mutate({ id: episode.id, starred: !live!.starred })}
+              aria-label={live!.starred ? "Unstar" : "Star"}
+              title={live!.starred ? "Unstar" : "Star"}
             >
-              <StarIcon filled={episode.starred} />
+              <StarIcon filled={live!.starred} />
             </button>
             <button
-              className={`btn-icon${episode.played ? " on" : ""}`}
-              onClick={() => actions.setState.mutate({ id: episode.id, played: !episode.played })}
-              aria-label={episode.played ? "Mark unplayed" : "Mark played"}
-              title={episode.played ? "Mark unplayed" : "Mark played"}
+              className={`btn-icon${live!.played ? " on" : ""}`}
+              onClick={() => actions.setState.mutate({ id: episode.id, played: !live!.played })}
+              aria-label={live!.played ? "Mark unplayed" : "Mark played"}
+              title={live!.played ? "Mark unplayed" : "Mark played"}
             >
               <CheckIcon />
             </button>
