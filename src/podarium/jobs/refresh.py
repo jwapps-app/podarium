@@ -108,6 +108,14 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
             # what we already know.
             continue
         if getattr(episode, attr) != value:
+            # What was fetched from the old address does not describe the new one. The
+            # cache is per episode, not per address, so it is cleared here or never.
+            if attr == "chapters_url":
+                episode.chapters_json = None
+                episode.chapters_fetched_at = None
+            elif attr == "transcript_url":
+                episode.transcript_text = None
+                episode.transcript_fetched_at = None
             setattr(episode, attr, value)
             changed = True
     return changed
