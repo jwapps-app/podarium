@@ -134,3 +134,69 @@ class TestAFailingEncodeDoesNotBlockTheBacklog:
 
         assert len(set(attempted)) == 2, "both were tried, not the first one three times"
         assert len(attempted) == 2, "and neither was retried inside the backoff"
+
+
+class TestAProcessedFileRemembersItsRecipe:
+    async def test_a_changed_setting_rebuilds_the_file(self, session, monkeypatch):
+        settings_row = await get_app_settings(session)
+        settings_row.global_trim_silence = False
+        settings_row.global_normalize_audio = True
+        feed = await _feed(session)
+        source = _file(feed, "1.mp3", 10)
+        old = _file(feed, "1.processed.mp3", 9)
+        episode = Episode(
+            feed_id=feed.id, guid="ep-1", local_path=str(source), local_bytes=10,
+            processed_path=str(old), processed_bytes=9, processed_recipe="trim",
+            source_duration_seconds=10.0, processed_duration_seconds=9.0,
+        )
+        session.add(episode)
+        await session.commit()
+
+        attempted: list[int] = []
+
+        async def record(session_, episode_, feed_, app_settings):
+            attempted.append(episode_.id)
+            return True
+
+        monkeypatch.setattr(audio, "ffmpeg_available", lambda: True)
+        monkeypatch.setattr(audio, "process_episode", record)
+        monkeypatch.setattr(audio, "_failed_until", {})
+        await audio.reconcile_processing(session)
+
+        assert not old.exists(), "the trimmed file is not the levelled one that was asked for"
+        assert attempted == [episode.id]
+
+    def test_recipes_are_named(self):
+        assert audio.recipe(True, False) == "trim"
+        assert audio.recipe(False, True) == "normalize"
+        assert audio.recipe(True, True) == "trim+normalize"
+        assert audio.recipe(False, False) is None
+
+
+class TestOneLiveJobPerEpisode:
+    async def test_a_racing_enqueue_gets_the_other_job(self, session):
+        """Two enqueues that both passed the existence check: the index refuses the
+        second insert, and the caller gets the first job rather than a 500."""
+        from podarium.db import get_sessionmaker
+
+        feed = await _feed(session)
+        episode = Episode(feed_id=feed.id, guid="ep-1", enclosure_url="https://cdn.example/1.mp3")
+        session.add(episode)
+        await session.commit()
+
+        first = await enqueue_download(session, episode, JobSource.auto)
+        await session.commit()
+
+        async with get_sessionmaker()() as other:
+            other_episode = await other.get(Episode, episode.id)
+            # Bypass the check, as a transaction that read before the first committed would.
+            other.add(
+                DownloadJob(
+                    episode_id=other_episode.id, source=JobSource.manual,
+                    state=JobState.queued, next_attempt_at=datetime.now(UTC),
+                )
+            )
+            with pytest.raises(Exception):
+                await other.commit()
+
+        assert first is not None

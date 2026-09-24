@@ -8,6 +8,7 @@ from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -318,5 +319,19 @@ async def enqueue_download(
         state=JobState.queued,
         next_attempt_at=datetime.now(UTC),
     )
-    session.add(job)
+    # Under a savepoint, because the live-job index may refuse it: a second enqueue that
+    # raced this one past the check above. Then theirs is the job, and this returns it.
+    try:
+        async with session.begin_nested():
+            session.add(job)
+            await session.flush()
+    except IntegrityError:
+        return (
+            await session.execute(
+                select(DownloadJob)
+                .where(DownloadJob.episode_id == episode.id)
+                .where(DownloadJob.state.in_([JobState.queued, JobState.running]))
+                .limit(1)
+            )
+        ).scalar_one_or_none()
     return job
