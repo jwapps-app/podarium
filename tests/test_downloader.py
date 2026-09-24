@@ -170,3 +170,28 @@ async def test_running_jobs_are_requeued_on_startup(session):
 
     await session.refresh(job)
     assert job.state is JobState.queued
+
+
+@respx.mock
+async def test_a_compressed_response_is_not_mistaken_for_a_truncated_one(session):
+    """A server that gzips audio makes Content-Length describe the wire bytes; the
+    client counts decoded ones. That mismatch used to send a complete download back to
+    the queue as truncated, every attempt."""
+    import gzip
+
+    wire = gzip.compress(PAYLOAD)
+    route = respx.get(AUDIO_URL).mock(
+        return_value=httpx.Response(
+            200, content=wire,
+            headers={"Content-Length": str(len(wire)), "Content-Encoding": "gzip"},
+        )
+    )
+    episode = await _episode(session)
+    job = await _job(session, episode)
+
+    await run_job(session, job, user_agent="test")
+
+    assert route.calls.last.request.headers["accept-encoding"] == "identity", "asked for raw bytes"
+    assert job.state is JobState.done
+    await session.refresh(episode)
+    assert target_path(episode).read_bytes() == PAYLOAD

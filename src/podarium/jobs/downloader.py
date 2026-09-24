@@ -132,9 +132,17 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
         # stream forever and fill the volume the database shares.
         max_bytes = get_settings().download_max_bytes
         async with build_client(user_agent) as client:
-            async with client.stream("GET", episode.enclosure_url) as response:
+            # Uncompressed, please: audio does not compress, and a server that gzips it
+            # anyway makes Content-Length describe the wire bytes while the client counts
+            # the decoded ones -- a complete download that then reads as truncated.
+            async with client.stream(
+                "GET", episode.enclosure_url, headers={"Accept-Encoding": "identity"}
+            ) as response:
                 response.raise_for_status()
                 raw_length = response.headers.get("content-length")
+                # A server that compressed regardless has made the length incomparable.
+                if response.headers.get("content-encoding", "identity").lower() != "identity":
+                    raw_length = None
                 if raw_length and raw_length.isdigit():
                     declared_length = int(raw_length)
                     if declared_length > max_bytes:
