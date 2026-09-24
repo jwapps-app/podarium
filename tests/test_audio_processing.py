@@ -55,6 +55,15 @@ class TestFilterChain:
     def test_each_filter_appears_only_when_asked_for(self):
         assert "loudnorm" not in _filters(trim=True, normalize=False)
         assert "silenceremove" not in _filters(trim=False, normalize=True)
+
+    def test_silence_removal_detects_and_keeps_as_documented(self):
+        """A silence has to last MIN_SILENCE_SECONDS to be cut, and SILENCE_KEEP_SECONDS of
+        it stays. One value once served as both, so any quarter-second pause went entirely."""
+        from podarium.jobs.audio import MIN_SILENCE_SECONDS, SILENCE_KEEP_SECONDS
+
+        chain = _filters(trim=True, normalize=False)
+        assert f"stop_duration={MIN_SILENCE_SECONDS}" in chain
+        assert f"stop_silence={SILENCE_KEEP_SECONDS}" in chain
         assert _filters(trim=False, normalize=False) == ""
 
 

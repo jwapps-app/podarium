@@ -92,9 +92,13 @@ def _filters(*, trim: bool, normalize: bool) -> str:
     chain: list[str] = []
     if trim:
         chain.append(
+            # stop_duration is how long a silence must last to count as one; stop_silence
+            # is how much of it is left in. They were one parameter for a while, which
+            # removed every quarter-second pause outright and left nothing where it was.
             f"silenceremove=stop_periods=-1"
-            f":stop_duration={SILENCE_KEEP_SECONDS}"
+            f":stop_duration={MIN_SILENCE_SECONDS}"
             f":stop_threshold={SILENCE_THRESHOLD_DB}dB"
+            f":stop_silence={SILENCE_KEEP_SECONDS}"
         )
     if normalize:
         chain.append(
