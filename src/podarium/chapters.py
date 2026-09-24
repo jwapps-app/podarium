@@ -14,6 +14,7 @@ publisher URLs smuggled back into a client response through a field nobody was c
 from __future__ import annotations
 
 import json
+import math
 import logging
 import re
 from dataclasses import dataclass
@@ -76,12 +77,21 @@ def parse_chapters(raw: str) -> list[Chapter]:
     if not isinstance(document, dict):
         return []
 
+    items = document.get("chapters")
+    if not isinstance(items, list):
+        # "chapters": 123 is a publisher's mistake, not a list of nothing to iterate.
+        return []
+
     chapters: list[Chapter] = []
-    for item in document.get("chapters") or []:
+    for item in items:
         if not isinstance(item, dict):
             continue
         start = item.get("startTime")
         if not isinstance(start, (int, float)) or isinstance(start, bool):
+            continue
+        # Python's JSON reader accepts NaN and Infinity; strict JSON, and every client,
+        # does not. A chapter cannot start there anyway.
+        if not math.isfinite(start) or start < 0:
             continue
         title = item.get("title")
         clean_title = title if isinstance(title, str) and title.strip() else None
