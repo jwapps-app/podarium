@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface Props {
   /** Always an /api/images path from the API -- never a publisher URL. */
@@ -16,6 +16,9 @@ interface Props {
  */
 export function Artwork({ src, alt, fallbackText, className }: Props) {
   const [failed, setFailed] = useState(false);
+  // A new source is a new question. Rows are reused as lists change, and a component
+  // that once failed to load one cover used to show initials for every cover after it.
+  useEffect(() => setFailed(false), [src]);
 
   if (!src || failed) {
     const initials = (fallbackText ?? alt ?? "?")

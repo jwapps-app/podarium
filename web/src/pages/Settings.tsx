@@ -288,6 +288,9 @@ function GlobalSettings({ initial }: { initial: GlobalValues }) {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
       // The ceiling is reported by the storage panel too.
       queryClient.invalidateQueries({ queryKey: ["storage"] });
+      // Feeds carry the effective value of every inherited setting.
+      queryClient.invalidateQueries({ queryKey: ["feeds"] });
+      queryClient.invalidateQueries({ queryKey: ["feed"] });
     },
   });
 
