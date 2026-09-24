@@ -195,12 +195,21 @@ async def mark_all_feeds_seen(session: AsyncSession, user_id: int) -> int:
         return 0
 
     statement = pg_insert(FeedState).values(
-        [{"user_id": user_id, "feed_id": feed_id, "last_seen_at": now} for feed_id in feed_ids]
+        [
+            {"user_id": user_id, "feed_id": feed_id, "last_seen_at": now, "updated_at": now}
+            for feed_id in feed_ids
+        ]
     )
+    # updated_at spelled out: the model's onupdate does not reach into a raw upsert, and
+    # without it a row that already existed kept its old stamp, so the cleared badge never
+    # entered the sync delta and the phone showed new episodes for ever.
     await session.execute(
         statement.on_conflict_do_update(
             index_elements=[FeedState.user_id, FeedState.feed_id],
-            set_={"last_seen_at": statement.excluded.last_seen_at},
+            set_={
+                "last_seen_at": statement.excluded.last_seen_at,
+                "updated_at": statement.excluded.updated_at,
+            },
         )
     )
     return len(feed_ids)

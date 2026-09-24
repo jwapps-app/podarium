@@ -5,6 +5,9 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 INSECURE_SECRET_KEY = "dev-insecure-change-me"
+# Every value a deployment could have copied from somewhere public. The .env.example
+# placeholder is long enough to pass a length check, which is why it is listed by name.
+INSECURE_SECRET_KEYS = frozenset({INSECURE_SECRET_KEY, "change-me-to-a-long-random-string", ""})
 
 
 class Settings(BaseSettings):
@@ -71,6 +74,12 @@ class Settings(BaseSettings):
     # otherwise stream forever and fill the disk. Three hours of 320kbps audio is about
     # 450 MB; two gigabytes is comfortably above any real episode.
     download_max_bytes: int = 2_000_000_000
+    # How far behind ``since`` a sync looks. A row's updated_at is its transaction's start,
+    # so a write that began before a sync and committed after it carries a stamp the sync
+    # has already moved past. Looking back this far re-sends a few rows a client already
+    # holds -- harmless, it upserts them -- and closes that gap for any write shorter than
+    # this. Zero in tests, which assert exact deltas.
+    sync_overlap_seconds: int = 30
 
     # Refuse outbound fetches to loopback and private-range addresses. Feed, artwork,
     # enclosure and chapter URLs are all publisher-controlled once a feed is subscribed,

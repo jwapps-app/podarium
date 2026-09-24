@@ -26,6 +26,8 @@ os.environ["DOWNLOAD_DIR"] = str(_TMP / "downloads")
 os.environ["ARTWORK_DIR"] = str(_TMP / "artwork")
 os.environ["SECRET_KEY"] = "test-secret"
 os.environ["RUN_BACKGROUND_JOBS"] = "false"
+# Exact deltas are asserted throughout; the overlap has tests of its own.
+os.environ["SYNC_OVERLAP_SECONDS"] = "0"
 # Blanked, not popped: Settings also reads .env, so removing the variables would let a
 # developer's real credentials leak into the run and make the suite pass or fail depending
 # on whose machine it is on. Environment takes precedence over the file, so "" wins.

@@ -259,3 +259,78 @@ async def test_the_mirror_matches_the_server_after_a_mixed_round(session, client
     assert mirror.episodes[played]["played"] is True
     assert mirror.episodes[starred]["starred"] is True
     assert mirror.queue == [queued]
+
+
+async def test_every_page_of_a_run_reports_the_same_now(session, client):
+    """Feeds ride the first page only, so a feed changed between pages is invisible to the
+    run. With a moving `now` it was invisible to the next run too: the client adopts the
+    last page's clock, which had already passed the change."""
+    feed = await _feed(session, "https://a.example/f.xml", "Alpha", episodes=3)
+
+    first = (await client.get("/api/sync", params={"limit": 2})).json()
+    assert first["next_cursor"]
+
+    feed.notify = not feed.notify
+    await session.commit()
+
+    last = (await client.get("/api/sync", params={"limit": 2, "cursor": first["next_cursor"]})).json()
+    assert last["next_cursor"] is None
+    assert last["now"] == first["now"]
+
+    delta = (await client.get("/api/sync", params={"since": last["now"]})).json()
+    assert [f["id"] for f in delta["feeds"]] == [feed.id]
+
+
+async def test_the_overlap_resends_a_write_stamped_just_before_the_last_sync(
+    session, client, monkeypatch
+):
+    """updated_at is a transaction's start, so a write that committed just after a sync
+    can carry a stamp from just before it. The overlap looks back far enough to catch it."""
+    from sqlalchemy import text
+
+    from podarium.config import get_settings
+
+    await _feed(session, "https://a.example/f.xml", "Alpha", episodes=2)
+    mirror = Mirror()
+    await sync(client, mirror)
+    episode_id = sorted(mirror.episodes)[0]
+
+    # A write whose stamp predates the sync's now by ten seconds, as a slow transaction
+    # that started before the sync and committed after it would carry.
+    await session.execute(
+        text("UPDATE episodes SET title = 'late', updated_at = now() - interval '10 seconds' WHERE id = :id"),
+        {"id": episode_id},
+    )
+    await session.commit()
+
+    assert (await sync(client, mirror))["episodes"] == [], "without overlap the write is lost"
+
+    monkeypatch.setattr(get_settings(), "sync_overlap_seconds", 30)
+    payload = await sync(client, mirror)
+    # The neighbour written in the same second comes back too; re-sending a row the
+    # client already holds is the price of the overlap, and an upsert makes it free.
+    assert episode_id in [e["id"] for e in payload["episodes"]]
+    assert mirror.episodes[episode_id]["title"] == "late"
+
+
+async def test_clearing_every_badge_reaches_the_client(session, client):
+    """Opening the inbox clears all shows at once through one upsert. The upsert set
+    last_seen_at and nothing else, so an existing row kept its old updated_at and never
+    re-entered the delta: the badge cleared on the desktop and stayed on the phone."""
+    feed = await _feed(session, "https://a.example/f.xml", "Alpha", episodes=3)
+    session.add(
+        FeedState(
+            user_id=1, feed_id=feed.id, last_seen_at=datetime.now(UTC) - timedelta(days=9)
+        )
+    )
+    await session.commit()
+
+    mirror = Mirror()
+    await sync(client, mirror)
+    assert mirror.feeds[feed.id]["new_episode_count"] == 3
+
+    assert (await client.post("/api/feeds/seen")).status_code == 204
+    payload = await sync(client, mirror)
+
+    assert [f["id"] for f in payload["feeds"]] == [feed.id]
+    assert mirror.feeds[feed.id]["new_episode_count"] == 0

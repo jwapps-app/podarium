@@ -19,17 +19,39 @@ class InvalidCursor(ValueError):
     """Raised for a cursor that is not decodable. Callers map this to a 400."""
 
 
-def encode_cursor(stamp: datetime, row_id: int) -> str:
-    raw = f"{stamp.isoformat()}|{row_id}".encode()
-    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+def encode_cursor(stamp: datetime, row_id: int, checkpoint: datetime | None = None) -> str:
+    """``checkpoint`` is the moment a paging run began, carried so every page of the run
+    can report the same ``now``. Only sync uses it."""
+    raw = f"{stamp.isoformat()}|{row_id}"
+    if checkpoint is not None:
+        raw += f"|{checkpoint.isoformat()}"
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _fields(cursor: str) -> list[str]:
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        fields = base64.urlsafe_b64decode(padded).decode().split("|")
+    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        raise InvalidCursor(str(exc)) from exc
+    if len(fields) < 2:
+        raise InvalidCursor("missing separator")
+    return fields
 
 
 def decode_cursor(cursor: str) -> tuple[datetime, int]:
+    fields = _fields(cursor)
     try:
-        padded = cursor + "=" * (-len(cursor) % 4)
-        stamp, separator, row_id = base64.urlsafe_b64decode(padded).decode().partition("|")
-        if not separator:
-            raise ValueError("missing separator")
-        return datetime.fromisoformat(stamp), int(row_id)
-    except (ValueError, binascii.Error, UnicodeDecodeError) as exc:
+        return datetime.fromisoformat(fields[0]), int(fields[1])
+    except ValueError as exc:
+        raise InvalidCursor(str(exc)) from exc
+
+
+def decode_checkpoint(cursor: str) -> datetime | None:
+    fields = _fields(cursor)
+    if len(fields) < 3:
+        return None
+    try:
+        return datetime.fromisoformat(fields[2])
+    except ValueError as exc:
         raise InvalidCursor(str(exc)) from exc

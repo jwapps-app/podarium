@@ -11,7 +11,7 @@ be permanently invisible. So a truncated response carries ``next_cursor``, and `
 must not advance until the pages run out.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
@@ -21,7 +21,8 @@ from sqlalchemy.orm import aliased
 from podarium.api.bookmark_routes import load_bookmarks
 from podarium.api.queue_routes import _load_queue
 from podarium.auth import current_user
-from podarium.cursor import InvalidCursor, decode_cursor, encode_cursor
+from podarium.config import get_settings
+from podarium.cursor import InvalidCursor, decode_checkpoint, decode_cursor, encode_cursor
 from podarium.db import get_session
 from podarium.models import DeletedFeed, Episode, EpisodeState, Feed, FeedState, User
 from podarium.schemas import SyncOut, episode_out, feed_out
@@ -57,6 +58,26 @@ async def sync(
     # and changes fall into a gap the client never revisits, run ahead and every sync
     # re-sends the whole library. Both are invisible until they are not.
     now = (await session.execute(select(func.now()))).scalar_one()
+
+    # One clock for the whole run. The first page's now travels inside the cursor and
+    # comes back as every later page's now, so a client that adopts the last page's --
+    # which is what the documented contract says to do -- adopts the moment the run began.
+    # Feeds, the queue and deletions are only sent on the first page, so a feed changed
+    # between pages was invisible to that run; with a moving now it was invisible to the
+    # next one as well.
+    if cursor:
+        try:
+            checkpoint = decode_checkpoint(cursor)
+        except InvalidCursor as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Invalid cursor") from exc
+        if checkpoint is not None:
+            now = checkpoint
+
+    # See Settings.sync_overlap_seconds: a write that committed just after the last sync
+    # can carry a stamp from just before it.
+    if since is not None:
+        since = since - timedelta(seconds=get_settings().sync_overlap_seconds)
+
     state = aliased(EpisodeState)
 
     # When a record last changed, from the client's point of view. An episode is in the
@@ -99,7 +120,7 @@ async def sync(
         marker = last_episode.updated_at
         if last_state is not None and last_state.updated_at > marker:
             marker = last_state.updated_at
-        next_cursor = encode_cursor(marker, last_episode.id)
+        next_cursor = encode_cursor(marker, last_episode.id, checkpoint=now)
 
     episodes = [episode_out(episode, episode_state) for episode, episode_state in rows]
 
