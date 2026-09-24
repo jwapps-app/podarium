@@ -39,11 +39,39 @@ def normalize_feed_url(url: str) -> str:
         parts = urlsplit(f"https://{url.strip()}")
 
     host = parts.hostname or ""
-    port = parts.port
+    try:
+        port = parts.port
+    except ValueError:
+        # "example.com:abc" -- not a port. Keep it as written rather than raise from a
+        # comparison key; the fetch will report the address in its own words.
+        port = None
+        host = parts.netloc.rsplit("@", 1)[-1].lower()
     if port is not None and _DEFAULT_PORTS.get(parts.scheme.lower()) != str(port):
         host = f"{host}:{port}"
+    # Credentials in the URL are part of which feed this is: two private feeds on one
+    # host differ in nothing else.
+    if parts.username:
+        host = f"{parts.username}@{host}"
 
     path = parts.path.rstrip("/")
 
     # Fragments never identify a feed.
     return urlunsplit(("https", host, path, parts.query, ""))
+
+
+_CREDENTIAL_PARAMS = ("token", "key", "auth", "secret", "pass", "sig", "access", "subscri")
+
+
+def looks_private(url: str) -> bool:
+    """Whether a feed URL appears to carry a subscriber's credentials.
+
+    A guess from the URL's shape, since nothing else is recorded: user:pass@ in the
+    authority, or a query parameter named like a token. Used to keep such URLs away
+    from discovery services and share links, where erring towards private costs a
+    description and erring the other way leaks a paid feed.
+    """
+    parts = urlsplit(url.strip())
+    if parts.username or parts.password:
+        return True
+    names = [pair.split("=", 1)[0].lower() for pair in parts.query.split("&") if pair]
+    return any(hint in name for name in names for hint in _CREDENTIAL_PARAMS)

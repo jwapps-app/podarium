@@ -14,7 +14,7 @@ from podarium.jobs.artwork import register_artwork
 from podarium.models import Feed, User
 from podarium.schemas import PreviewEpisodeOut, PreviewOut, SearchResultOut
 from podarium.services import get_app_settings
-from podarium.urls import normalize_feed_url
+from podarium.urls import normalize_feed_url, looks_private
 
 router = APIRouter(prefix="/api/search", tags=["search"])
 
@@ -127,7 +127,13 @@ async def search_by_feed_url(
     urls, ids = await _subscribed_index(session)
 
     try:
-        found = await podcastindex.podcast_by_feed_url(url, user_agent=app_settings.user_agent)
+        # A URL carrying a subscriber's credentials is not something to hand to a
+        # third party for a nicer description. It resolves directly, below.
+        found = (
+            None
+            if looks_private(url)
+            else await podcastindex.podcast_by_feed_url(url, user_agent=app_settings.user_agent)
+        )
         if found:
             return SearchResultOut(
                 podcast_index_id=found.podcast_index_id,
