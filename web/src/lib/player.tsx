@@ -113,6 +113,10 @@ const RESUME_FILTERS = { in_progress: true, limit: 1 } as const;
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const queryClient = useQueryClient();
+  // Bumped whenever the element is given a new source. A loadedmetadata callback armed
+  // for one source can fire after the next has been cued -- the element is reused -- and
+  // used to seek the new episode to the old one's position, or start it unasked.
+  const loadGenRef = useRef(0);
 
   const [episode, setEpisode] = useState<Episode | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -184,11 +188,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!options.force && !options.played && Math.abs(rounded - lastReportedRef.current) < 5) {
         return;
       }
+      const previouslyReported = lastReportedRef.current;
       lastReportedRef.current = rounded;
 
       // Whole seconds, and only what has not been sent. Kept out of the payload entirely
       // when it is zero so a state write that involves no listening -- marking played,
       // starring -- cannot be mistaken for any.
+      //
+      // Taken now and given back on failure: a request lost to a tunnel used to take its
+      // listening time with it, and the total was short for good.
       const listened = Math.floor(listenedRef.current);
       if (listened > 0) listenedRef.current -= listened;
 
@@ -215,7 +223,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           // the advance.
           queryClient.invalidateQueries({ queryKey: ["queue"] });
         })
-        .catch((cause) => console.error("could not save playback position", cause));
+        .catch((cause) => {
+          console.error("could not save playback position", cause);
+          // Still the same episode: put the delta back and let the next tick resend it.
+          // A different one by now would be credited with time it did not play.
+          if (episodeRef.current?.id === current.id) {
+            listenedRef.current += listened;
+            lastReportedRef.current = previouslyReported;
+          }
+        });
     },
     [queryClient],
   );
@@ -270,6 +286,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      const generation = ++loadGenRef.current;
       audio.src = next.stream_url;
       audio.load();
       // Assigning src resets playbackRate to 1, so the chosen speed is reapplied here
@@ -282,6 +299,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const resumeAt = next.played ? 0 : next.position_seconds;
       const startAt = resumeAt > 0 ? resumeAt : intro;
       const begin = () => {
+        if (loadGenRef.current !== generation) return;
         // Seeking before metadata arrives is silently ignored, so resume happens here.
         if (startAt > 0 && Number.isFinite(audio.duration) && startAt < audio.duration) {
           audio.currentTime = startAt;
@@ -406,6 +424,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (audio) {
       reportPosition(audio.currentTime, { force: true });
       audio.pause();
+      loadGenRef.current += 1;
       audio.removeAttribute("src");
       audio.load();
     }
@@ -626,8 +645,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         // resource is finished, so it needs a fresh load rather than another seek.
         const resumeAt = audio.currentTime;
         const wasPlaying = !audio.paused;
+        const generation = ++loadGenRef.current;
         audio.load();
         const resume = () => {
+          if (loadGenRef.current !== generation) return;
           if (Number.isFinite(audio.duration) && resumeAt < audio.duration) {
             audio.currentTime = resumeAt;
           }
