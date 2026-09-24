@@ -198,3 +198,16 @@ class TestTrimmingSavings:
 
         assert body["seconds_listened"] == 1800
         assert body["seconds_saved_by_trimming"] == 0
+
+
+async def test_two_reports_at_once_both_count(client, episodes):
+    """Added by the database, so neither overwrites the other's total."""
+    import asyncio
+
+    episode_id = episodes[0].id
+    await client.put(f"/api/episodes/{episode_id}/state", json={"position_seconds": 1})
+    await asyncio.gather(*[
+        client.put(f"/api/episodes/{episode_id}/state", json={"position_seconds": 5, "listened_delta": 10})
+        for _ in range(4)
+    ])
+    assert (await stats(client))["seconds_listened"] == 40

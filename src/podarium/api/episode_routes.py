@@ -1,7 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -87,9 +88,18 @@ async def _get_or_create_state(
     state = await session.get(EpisodeState, {"user_id": user_id, "episode_id": episode_id})
     if state is not None:
         return state, True
-    state = EpisodeState(user_id=user_id, episode_id=episode_id)
-    session.add(state)
-    await session.flush()
+    # Two first writes at once -- a phone and a browser both starting the same episode --
+    # used to collide on the primary key and fail one of them. The insert yields instead,
+    # and whichever row is there is the one both continue with.
+    await session.execute(
+        pg_insert(EpisodeState)
+        .values(user_id=user_id, episode_id=episode_id)
+        .on_conflict_do_nothing(index_elements=[EpisodeState.user_id, EpisodeState.episode_id])
+    )
+    state = await session.get(
+        EpisodeState, {"user_id": user_id, "episode_id": episode_id}, populate_existing=True
+    )
+    assert state is not None
     return state, False
 
 
@@ -341,7 +351,15 @@ async def update_state(
     # it stays true however long it took to arrive from a device that was offline. Added
     # rather than assigned, so two devices that both played an episode both count.
     if body.listened_delta:
-        state.listened_seconds = (state.listened_seconds or 0) + body.listened_delta
+        # Added by the database, not read-add-write here: two reports landing together
+        # both read the old total and one of them was lost.
+        await session.execute(
+            update(EpisodeState)
+            .where(EpisodeState.user_id == user.id, EpisodeState.episode_id == episode_id)
+            .values(listened_seconds=EpisodeState.listened_seconds + body.listened_delta)
+            .execution_options(synchronize_session=False)
+        )
+        await session.refresh(state)
 
     # Judged against when the stored change was made, not when it arrived. See
     # EpisodeState.changed_at for the offline flush this distinguishes.
