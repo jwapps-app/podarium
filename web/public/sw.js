@@ -14,13 +14,8 @@
 const SHELL = "podarium-shell-v2";
 const AUDIO = "podarium-audio-v1";
 
-/** Episode ids held in the audio cache, kept in memory.
- *
- *  The fetch handler has to decide whether to intercept before it is allowed to await
- *  anything, so it cannot ask the cache. Refreshed whenever the cache changes, and once on
- *  activation. Being briefly empty is harmless: a saved episode simply plays from the
- *  network for a moment, which is what would have happened anyway.
- */
+/** Episode ids held in the audio cache, kept in memory for the page's "what is saved"
+ *  question. Not consulted when serving: see the fetch handler. */
 const savedIds = new Set();
 
 function episodeIdFrom(pathname) {
@@ -149,20 +144,18 @@ self.addEventListener("fetch", (event) => {
   // Saved audio, served from the cache whether or not there is a network. The point of
   // saving an episode is that it does not depend on reaching the server.
   if (url.pathname.startsWith("/api/stream/")) {
-    // Only touched for episodes actually saved here. Everything else is left to the
-    // browser's own networking, deliberately.
+    // Every stream request is answered from here, and the cache is asked each time.
     //
-    // This was once justified here by a claim that passing media through a service worker
-    // breaks seeking on iOS. That was a guess made while chasing a seek fault, and it was
-    // wrong -- the fault was a CSS width, and seeking works fine through this path. The
-    // gate stays because it is still the right shape: an episode nobody saved has nothing
-    // in the cache to serve, so intercepting it only adds a hop between the player and the
-    // network for no gain.
+    // This used to be gated on a set of saved ids held in memory, because respondWith
+    // must be called synchronously and the cache cannot be. But the browser stops an
+    // idle worker and starts it again later without running activate, and the fresh one
+    // knows of nothing saved -- so the gate let the request through to a network that,
+    // offline, was not there. The saved episode failed at exactly the moment saving it
+    // was for. Calling respondWith with a promise is allowed; only the call itself must
+    // be synchronous. The hop this adds for unsaved episodes is a cache miss.
     //
-    // The decision has to be synchronous -- respondWith cannot be called after an await --
-    // so it reads a set held in memory rather than asking the cache.
-    if (!savedIds.has(episodeIdFrom(url.pathname))) return;
-
+    // (An older note here claimed passing media through a worker broke seeking on iOS.
+    // It was a guess made while chasing a seek fault that turned out to be a CSS width.)
     event.respondWith(
       (async () => {
         const cached = await caches.match(url.pathname, { cacheName: AUDIO });
