@@ -1,7 +1,9 @@
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
-from sqlalchemy import select
+import asyncio
+
+from sqlalchemy import or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium.auth import (
@@ -76,10 +78,12 @@ async def login(
         # Verified against a throwaway hash so an unknown name takes as long as a wrong
         # password. Skipping the work here made the two distinguishable by the clock,
         # whatever the response body said.
-        verify_password(_UNKNOWN_USER_HASH, body.password)
+        await asyncio.to_thread(verify_password, _UNKNOWN_USER_HASH, body.password)
         ok = False
     else:
-        ok = verify_password(user.password_hash, body.password)
+        # Off the event loop: argon2 is a deliberate hundred milliseconds of work, and
+        # done inline it stalled every stream this process was serving for each sign-in.
+        ok = await asyncio.to_thread(verify_password, user.password_hash, body.password)
 
     if not ok:
         await record_attempt(session, body.username, succeeded=False)
@@ -115,7 +119,20 @@ async def login(
             await record_attempt(session, body.username, succeeded=False)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
-        # Remember the step, so this code cannot be used again inside its window.
+        # Remember the step, so this code cannot be used again inside its window. As one
+        # conditional UPDATE rather than a read and a write: two sign-ins carrying the
+        # same code at the same moment both read the old step, both verified, and both
+        # wrote -- so the one-use promise held only for requests that queued politely.
+        claimed = await session.execute(
+            update(User)
+            .where(User.id == user.id)
+            .where(or_(User.totp_last_step.is_(None), User.totp_last_step < step))
+            .values(totp_last_step=step)
+            .execution_options(synchronize_session=False)
+        )
+        if claimed.rowcount != 1:
+            await record_attempt(session, body.username, succeeded=False)
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         user.totp_last_step = step
 
     await record_attempt(session, body.username, succeeded=True)
@@ -203,7 +220,7 @@ async def totp_disable(
     session: AsyncSession = Depends(get_session),
 ) -> UserOut:
     """Turn it off. Requires the password again, not just a live session."""
-    if not verify_password(user.password_hash, body.password):
+    if not await asyncio.to_thread(verify_password, user.password_hash, body.password):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Incorrect password")
 
     user.totp_secret = None

@@ -6,6 +6,7 @@ insufficient -- the case that matters once the login form is on the public inter
 
 import httpx
 import pyotp
+from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
@@ -178,3 +179,15 @@ async def test_failed_codes_count_towards_the_lockout(client, session):
         assert (await sign_in(client, totp_code="000000")).status_code == 401
 
     assert (await sign_in(client, totp_code="000000")).status_code == 429
+
+
+async def test_the_same_code_cannot_sign_in_twice_at_once(client, session):
+    """Two requests with one code, at the same moment. Exactly one may win."""
+    import asyncio
+
+    secret = await enable(client, session)
+    await client.post("/api/auth/logout")
+    code = pyotp.TOTP(secret).at(datetime.now(UTC) + timedelta(seconds=30))
+
+    responses = await asyncio.gather(sign_in(client, totp_code=code), sign_in(client, totp_code=code))
+    assert sorted(r.status_code for r in responses) == [200, 401]
