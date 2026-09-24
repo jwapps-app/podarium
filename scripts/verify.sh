@@ -18,7 +18,14 @@ JAR="$(mktemp)"
 TMP="$(mktemp -d)"
 TOKEN_ID=""
 
+FEED_ID=""
+
 cleanup() {
+  # The run's own subscription goes with it. It was refused above if the feed was
+  # already in the library, so nothing here removes something the person wanted.
+  if [ -n "$FEED_ID" ]; then
+    curl -sS -b "$JAR" -X DELETE "$BASE/api/feeds/$FEED_ID" -o /dev/null || true
+  fi
   # Revoke the device token this run created. Each one is a long-lived credential with
   # full API access, so a script that mints one per run and walks away leaves a pile of
   # live keys behind -- revoke before the cookie jar goes, since revoking needs it.
@@ -35,7 +42,8 @@ step() { printf '\n== %s\n' "$1"; }
 
 api() { curl -sS -b "$JAR" -c "$JAR" "$@"; }
 code() { curl -sS -b "$JAR" -c "$JAR" -o /dev/null -w '%{http_code}' "$@"; }
-json() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
+# Extra arguments reach the expression as sys.argv[1..].
+json() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)" "${@:2}"; }
 
 step "health"
 [ "$(code "$BASE/healthz")" = 200 ] || fail "healthz"
@@ -56,6 +64,11 @@ TOKEN_ID="$(python3 -c "import json;print(json.load(open('$TMP/token.json'))['id
 pass "bearer token works"
 
 step "subscribe"
+# This run marks the feed played, unplayed, purges a download and finally unsubscribes.
+# None of that may happen to a show the person actually follows.
+if api "$BASE/api/feeds" | json 'any(f["feed_url"] == sys.argv[1] for f in d)' "$FEED" | grep -q True; then
+  fail "$FEED is already in this library; set VERIFY_FEED_URL to a feed you do not follow"
+fi
 FEED_ID="$(api -X POST "$BASE/api/feeds" -H 'content-type: application/json' \
   -d "{\"feed_url\":\"$FEED\"}" | json 'd["id"]')"
 pass "subscribed to feed $FEED_ID"
@@ -395,7 +408,7 @@ python3 - "$TMP/push.json" <<'PUSH' || fail "push config is incoherent"
 import json, sys
 
 body = json.load(open(sys.argv[1]))
-assert set(body) == {"public_key", "subscribed"}, body
+assert {"public_key", "subscribed", "relay_configured", "apns_devices"} <= set(body), body
 if body["public_key"] is None:
     assert body["subscribed"] is False, "subscribed devices but no key to sign for them"
 else:

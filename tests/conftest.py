@@ -20,6 +20,13 @@ DEV_DB = os.environ.get(
 )
 TEST_DB = os.environ.get("PODARIUM_TEST_DATABASE_URL", DEV_DB.rsplit("/", 1)[0] + "/podarium_test")
 
+# The suite drops and recreates every table in the database it is pointed at. It will
+# only be pointed at one whose name says it is disposable.
+if not TEST_DB.rsplit("/", 1)[-1].split("?", 1)[0].endswith("_test"):
+    raise SystemExit(
+        f"refusing to run the suite against {TEST_DB!r}: the database name must end in _test"
+    )
+
 # Set before anything imports podarium.config, whose settings are cached on first read.
 os.environ["DATABASE_URL"] = TEST_DB
 os.environ["DOWNLOAD_DIR"] = str(_TMP / "downloads")
