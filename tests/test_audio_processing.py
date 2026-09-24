@@ -142,6 +142,7 @@ class TestReconciliation:
         processed = path.with_suffix(".processed.mp3")
         processed.write_bytes(b"trimmed")
         episode.processed_path = str(processed)
+        episode.processed_recipe = "trim"
         feed.trim_silence = True
         await session.commit()
 
@@ -194,6 +195,7 @@ class TestDurationBackfill:
             local_bytes=8,
             processed_path=str(target),
             processed_bytes=7,
+            processed_recipe="trim",
             # The state an episode processed by the earlier build is left in.
             source_duration_seconds=None,
             processed_duration_seconds=None,

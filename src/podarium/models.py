@@ -238,6 +238,10 @@ class Episode(Base):
     # back off, which would otherwise mean re-downloading everything.
     processed_path: Mapped[str | None] = mapped_column(Text)
     processed_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    # Which transformations produced the processed copy ("trim", "normalize", or both),
+    # so a changed setting is noticed and the file rebuilt. Without it, switching from
+    # trimming to levelling left the trimmed file in place, still being served.
+    processed_recipe: Mapped[str | None] = mapped_column(String(32))
 
     # Both measured from the files, not taken from the feed. duration_seconds above is what
     # the publisher claims, which is frequently wrong and sometimes absent; subtracting one
@@ -335,6 +339,16 @@ class QueueItem(Base):
 
 class DownloadJob(Base):
     __tablename__ = "download_jobs"
+    __table_args__ = (
+        # One job waiting or running per episode. Two transactions that both found
+        # nothing and both enqueued used to leave two workers writing the same file.
+        Index(
+            "uq_download_jobs_live_episode",
+            "episode_id",
+            unique=True,
+            postgresql_where=text("state IN ('queued', 'running')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False, index=True)

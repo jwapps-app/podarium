@@ -146,6 +146,12 @@ def wanted(feed: Feed, app_settings: AppSettings) -> tuple[bool, bool]:
     return bool(trim), bool(normalize)
 
 
+def recipe(trim: bool, normalize: bool) -> str | None:
+    """The name a processed file is stamped with, so a changed setting is noticed."""
+    parts = [name for name, on in (("trim", trim), ("normalize", normalize)) if on]
+    return "+".join(parts) or None
+
+
 # Everything is re-encoded to MP3: the filters rule out a stream copy, and one output
 # format keeps the served content type honest whatever the publisher shipped.
 PROCESSED_SUFFIX = ".processed.mp3"
@@ -260,6 +266,7 @@ async def process_episode(
         partial.replace(target)
         episode.processed_path = str(target)
         episode.processed_bytes = size
+        episode.processed_recipe = recipe(trim, normalize)
         episode.processed_at = datetime.now(UTC)
         # Failure to measure is not failure to process -- the file is good, the saving
         # simply goes unreported for that episode.
@@ -336,6 +343,11 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
     for episode, feed in rows:
         trim, normalize = wanted(feed, app_settings)
         if trim or normalize:
+            if episode.processed_path and episode.processed_recipe != recipe(trim, normalize):
+                # Made under different settings, or before the recipe was recorded. Either
+                # way it is not the file the settings ask for.
+                drop_processed(episode)
+                reclaimed += 1
             if not episode.processed_path:
                 pending.append((episode, feed))
             elif (
@@ -475,5 +487,6 @@ def drop_processed(episode: Episode) -> None:
         Path(episode.processed_path).unlink(missing_ok=True)
     episode.processed_path = None
     episode.processed_bytes = None
+    episode.processed_recipe = None
     episode.processed_at = None
     episode.processed_duration_seconds = None
