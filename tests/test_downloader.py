@@ -157,7 +157,10 @@ async def test_enqueue_is_idempotent(session):
 
 
 async def test_enqueue_skips_episodes_already_on_disk(session):
-    episode = await _episode(session, local_path="/somewhere/1.mp3")
+    on_disk = get_settings().download_dir / "present.mp3"
+    on_disk.parent.mkdir(parents=True, exist_ok=True)
+    on_disk.write_bytes(b"x")
+    episode = await _episode(session, local_path=str(on_disk))
     assert await enqueue_download(session, episode, JobSource.queue) is None
 
 

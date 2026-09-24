@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -22,6 +24,8 @@ from podarium.models import (
     RetentionMode,
     User,
 )
+
+log = logging.getLogger("podarium")
 
 
 def without_large_text():
@@ -240,6 +244,31 @@ def effective_retention(feed: Feed, app_settings: AppSettings) -> tuple[Retentio
     return mode, days
 
 
+async def _record_request(session: AsyncSession, episode: Episode, source: JobSource) -> None:
+    """Leave a job row saying this episode was asked for, when nothing had to be fetched.
+
+    _protected_episode_ids reads intent from job rows, so a request that found the file
+    already there used to leave no trace -- and the file was auto-download's to remove.
+    """
+    asked = (
+        await session.execute(
+            select(DownloadJob.id)
+            .where(DownloadJob.episode_id == episode.id)
+            .where(DownloadJob.source != JobSource.auto)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if asked is None:
+        session.add(
+            DownloadJob(
+                episode_id=episode.id,
+                source=source,
+                state=JobState.done,
+                next_attempt_at=datetime.now(UTC),
+            )
+        )
+
+
 async def enqueue_download(
     session: AsyncSession, episode: Episode, source: JobSource
 ) -> DownloadJob | None:
@@ -248,7 +277,21 @@ async def enqueue_download(
     Returns None when there is nothing to do: the file is already on disk, or a job for
     this episode is already waiting or running. Callers can fire this freely.
     """
+    if episode.local_path is not None and not Path(episode.local_path).exists():
+        # The row says downloaded; the disk disagrees. A volume that was wiped or a
+        # database restored from before a purge both leave this, and it used to be
+        # unrepairable: every request answered "already downloaded" for a file that was
+        # not there. Forget the file and carry on as for any other episode.
+        from podarium.jobs.audio import drop_processed  # audio imports this module
+
+        log.warning("episode %s: %s is missing; will fetch again", episode.id, episode.local_path)
+        episode.local_path = None
+        episode.local_bytes = None
+        drop_processed(episode)
+
     if episode.local_path is not None:
+        if source is not JobSource.auto:
+            await _record_request(session, episode, source)
         return None
     if not episode.enclosure_url:
         return None
@@ -262,6 +305,11 @@ async def enqueue_download(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        # A request is a claim on the file whether or not it starts a fetch. An
+        # automatic job that someone then asked for by hand is theirs from here on:
+        # auto-download must not take it back when the window moves.
+        if source is not JobSource.auto and existing.source is JobSource.auto:
+            existing.source = source
         return existing
 
     job = DownloadJob(
