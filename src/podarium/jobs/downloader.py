@@ -131,7 +131,8 @@ async def run_job(session: AsyncSession, job: DownloadJob, *, user_agent: str) -
         # publisher-controlled, and without a ceiling a broken or hostile server can
         # stream forever and fill the volume the database shares.
         max_bytes = get_settings().download_max_bytes
-        async with build_client(user_agent) as client:
+        deadline = asyncio.timeout(get_settings().download_deadline_seconds)
+        async with deadline, build_client(user_agent) as client:
             # Uncompressed, please: audio does not compress, and a server that gzips it
             # anyway makes Content-Length describe the wire bytes while the client counts
             # the decoded ones -- a complete download that then reads as truncated.

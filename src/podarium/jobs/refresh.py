@@ -23,6 +23,7 @@ from sqlalchemy import select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from podarium import push
+from podarium.config import get_settings
 from podarium.clients.feedfetch import ParsedEpisode, fetch_feed, FetchResult
 from podarium.db import get_sessionmaker
 from podarium.jobs.artwork import ensure_feed_artwork
@@ -121,9 +122,7 @@ def _apply_parsed_episode(episode: Episode, parsed: ParsedEpisode) -> bool:
     return changed
 
 
-async def _note_replaced_audio(
-    session: AsyncSession, episode: Episode, parsed: ParsedEpisode
-) -> None:
+def _note_replaced_audio(episode: Episode, parsed: ParsedEpisode) -> None:
     """Notice when the publisher's copy stops matching the one on disk.
 
     Nobody else can tell you this: a commercial app streams, so it simply plays whatever
@@ -277,12 +276,13 @@ async def refresh_feed(session: AsyncSession, feed: Feed, *, user_agent: str) ->
     # had succeeded: nothing recorded the failure, nothing backed off, and the scheduler
     # tried the same feed again on its next pass, for ever.
     try:
-        result = await fetch_feed(
-            feed.feed_url,
-            user_agent=user_agent,
-            etag=feed.etag,
-            last_modified=feed.last_modified,
-        )
+        async with asyncio.timeout(get_settings().fetch_deadline_seconds):
+            result = await fetch_feed(
+                feed.feed_url,
+                user_agent=user_agent,
+                etag=feed.etag,
+                last_modified=feed.last_modified,
+            )
         await _apply_result(session, feed, result, outcome, now=now)
     except Exception as exc:  # noqa: BLE001 - any transport, parse or storage failure backs the feed off
         await session.rollback()
@@ -380,7 +380,7 @@ async def _apply_result(
 
             episode = existing.get(parsed_episode.guid)
             if episode is not None and episode.local_path is not None:
-                await _note_replaced_audio(session, episode, parsed_episode)
+                _note_replaced_audio(episode, parsed_episode)
 
             if episode is None:
                 episode = Episode(feed_id=feed.id, guid=parsed_episode.guid, first_seen_at=now)

@@ -21,6 +21,36 @@ from podarium.subscribe import subscribe_feed
 router = APIRouter(prefix="/api/opml", tags=["opml"])
 
 MAX_OPML_BYTES = 5 * 1024 * 1024
+# Each is a fetch of a publisher's feed, in series, inside one request.
+MAX_OPML_FEEDS = 500
+
+
+async def _read_bounded(request: Request, file: UploadFile | None) -> bytes:
+    """The body, refused once it passes the limit rather than after it has all arrived.
+
+    Checking len() of a body already read is a limit on parsing, not on memory.
+    """
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_OPML_BYTES:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="OPML file too large")
+
+    chunks: list[bytes] = []
+    received = 0
+
+    async def take(chunk: bytes) -> None:
+        nonlocal received
+        received += len(chunk)
+        if received > MAX_OPML_BYTES:
+            raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="OPML file too large")
+        chunks.append(chunk)
+
+    if file is not None:
+        while chunk := await file.read(256 * 1024):
+            await take(chunk)
+    else:
+        async for chunk in request.stream():
+            await take(chunk)
+    return b"".join(chunks)
 
 
 @router.get("/export")
@@ -79,14 +109,17 @@ async def import_opml(
     session: AsyncSession = Depends(get_session),
 ) -> OpmlImportResult:
     """Accepts either a multipart upload or a raw OPML body."""
-    raw = await file.read() if file is not None else await request.body()
+    raw = await _read_bounded(request, file)
     if not raw:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Empty OPML body")
-    if len(raw) > MAX_OPML_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="OPML file too large")
 
     app_settings = await get_app_settings(session)
     urls = _extract_feed_urls(raw)
+    if len(urls) > MAX_OPML_FEEDS:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"OPML lists {len(urls)} feeds; at most {MAX_OPML_FEEDS} can be imported at once",
+        )
 
     imported = skipped = failed = 0
     errors: list[str] = []

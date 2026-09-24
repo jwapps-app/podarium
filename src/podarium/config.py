@@ -18,7 +18,6 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://podarium:podarium@localhost:5455/podarium"
 
     # The externally reachable base URL. The server builds absolute links from it (spec 3).
-    public_url: str = "http://localhost:8044"
 
     # The development value. Startup refuses to run a real deployment on it: it is in the
     # public source, and a session cookie signed with a published key is not signed.
@@ -69,6 +68,11 @@ class Settings(BaseSettings):
     download_concurrency: int = 2
     retention_sweep_minutes: int = 60
     http_timeout_seconds: float = 30.0
+    # Whole-operation deadlines, on top of the per-read timeout above. A peer that sends
+    # a byte every twenty seconds never trips a read timeout and used to hold a worker
+    # for as long as it liked.
+    fetch_deadline_seconds: float = 180.0
+    download_deadline_seconds: float = 2 * 60 * 60
 
     # The most a single audio download may occupy. A malicious or broken publisher can
     # otherwise stream forever and fill the disk. Three hours of 320kbps audio is about
