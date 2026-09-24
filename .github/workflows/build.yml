@@ -46,8 +46,7 @@ jobs:
         env:
           PODARIUM_DEV_DATABASE_URL: postgresql+asyncpg://podarium:podarium@localhost:5432/podarium
         run: |
-          uv venv --python 3.12
-          uv pip install -e ".[dev]"
+          uv sync --frozen --python 3.12 --extra dev
           uv run pytest -q
 
       - uses: actions/setup-node@v4

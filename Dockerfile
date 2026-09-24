@@ -30,11 +30,11 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-COPY pyproject.toml README.md ./
+COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
+# From the lock, exactly: the set that was tested is the set that ships.
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv venv /opt/venv && \
-    VIRTUAL_ENV=/opt/venv uv pip install .
+    UV_PROJECT_ENVIRONMENT=/opt/venv uv sync --frozen --no-dev --no-editable
 
 
 # ---------------------------------------------------------------- runtime
