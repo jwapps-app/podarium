@@ -123,16 +123,23 @@ services:
           # Dumped to a file first rather than piped straight into gzip: this shell has no
           # pipefail, so a failing pg_dump in a pipeline still reports gzip's success and
           # would leave a valid archive of a truncated dump.
-          if pg_dump --no-owner --no-privileges "$$DATABASE_URL" > /tmp/podarium.sql; then
-            # .partial until it is complete, so a container killed mid-write cannot leave
-            # something that looks like a finished backup.
-            gzip -c /tmp/podarium.sql > "$$OUT.partial" && mv "$$OUT.partial" "$$OUT"
+          # .partial until it is complete, so a container killed mid-write cannot leave
+          # something that looks like a finished backup. Every stage is on the one
+          # condition: a full disk that fails gzip or the rename is a failed backup, and
+          # used to be reported as a written one.
+          if pg_dump --no-owner --no-privileges "$$DATABASE_URL" > /tmp/podarium.sql \
+             && gzip -c /tmp/podarium.sql > "$$OUT.partial" \
+             && mv "$$OUT.partial" "$$OUT"; then
             echo "backup: wrote $$(basename $$OUT) ($$(du -h $$OUT | cut -f1))"
           else
-            echo "backup: pg_dump failed" >&2
+            echo "backup: FAILED at $$TS -- no new backup was written" >&2
             rm -f "$$OUT.partial"
           fi
           rm -f /tmp/podarium.sql
+          # A count that is not a positive number would keep nothing at all.
+          case "$$BACKUP_KEEP" in
+            ''|*[!0-9]*|0) echo "backup: BACKUP_KEEP=$$BACKUP_KEEP is not a positive number; keeping 14" >&2; BACKUP_KEEP=14 ;;
+          esac
           # Keep the newest N. A read loop rather than xargs -r, which busybox does not
           # reliably have.
           ls -1t /backups/podarium-*.sql.gz 2>/dev/null | tail -n +$$((BACKUP_KEEP + 1)) |
