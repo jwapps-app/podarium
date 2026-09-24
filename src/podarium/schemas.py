@@ -16,18 +16,10 @@ from podarium.models import Episode, Feed, RetentionMode
 from podarium.streaming import audio_duration_seconds, stream_url
 
 
-class ErrorBody(BaseModel):
-    code: str
-    message: str
-
-
-class ErrorResponse(BaseModel):
-    error: ErrorBody
-
-
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    # Bounded to the attempt-log column and to anything argon2 should be asked to hash.
+    username: str = Field(max_length=255)
+    password: str = Field(max_length=1024)
     # Required only once a second factor is enabled. A sign-in without it then fails with
     # code "totp_required", which is how the form knows to ask rather than to complain
     # that the password was wrong.
@@ -122,9 +114,9 @@ class FeedCreateRequest(BaseModel):
 
 
 class FeedUpdateRequest(BaseModel):
-    auto_download_count: int | None = Field(default=None, ge=0)
+    auto_download_count: int | None = Field(default=None, ge=0, le=10_000)
     retention_mode: RetentionMode | None = None
-    retention_days: int | None = Field(default=None, ge=0)
+    retention_days: int | None = Field(default=None, ge=0, le=36_500)
     playback_rate: float | None = Field(default=None, gt=0, le=5)
     notify: bool | None = None
     trim_silence: bool | None = None
@@ -293,13 +285,13 @@ class SettingsOut(BaseModel):
 
 class SettingsUpdate(BaseModel):
     global_retention_mode: RetentionMode | None = None
-    global_retention_days: int | None = Field(default=None, ge=0)
+    global_retention_days: int | None = Field(default=None, ge=0, le=36_500)
     # At least one byte: zero read as "unset" in the sweep while the API accepted it as a
     # limit. Unlimited is spelled by clearing it.
-    download_dir_max_bytes: int | None = Field(default=None, ge=1)
+    download_dir_max_bytes: int | None = Field(default=None, ge=1, le=2**63 - 1)
     clear_download_dir_max_bytes: bool = False
-    refresh_interval_minutes: int | None = Field(default=None, ge=1)
-    global_auto_download_count: int | None = Field(default=None, ge=0)
+    refresh_interval_minutes: int | None = Field(default=None, ge=1, le=525_600)
+    global_auto_download_count: int | None = Field(default=None, ge=0, le=10_000)
     user_agent: str | None = None
     # Bounded to what browsers and AVPlayer actually honour; outside this range playback
     # is either unintelligible or silently clamped by the platform.

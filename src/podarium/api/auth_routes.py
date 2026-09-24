@@ -194,7 +194,11 @@ async def totp_enable(
         )
 
     secret = body.secret
-    step = verify_totp(secret, body.code)
+    try:
+        step = verify_totp(secret, body.code)
+    except ValueError:
+        # Not base32, so not a secret this server issued. binascii.Error is a ValueError.
+        step = None
     if step is None:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
