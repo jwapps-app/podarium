@@ -294,7 +294,9 @@ class SettingsOut(BaseModel):
 class SettingsUpdate(BaseModel):
     global_retention_mode: RetentionMode | None = None
     global_retention_days: int | None = Field(default=None, ge=0)
-    download_dir_max_bytes: int | None = Field(default=None, ge=0)
+    # At least one byte: zero read as "unset" in the sweep while the API accepted it as a
+    # limit. Unlimited is spelled by clearing it.
+    download_dir_max_bytes: int | None = Field(default=None, ge=1)
     clear_download_dir_max_bytes: bool = False
     refresh_interval_minutes: int | None = Field(default=None, ge=1)
     global_auto_download_count: int | None = Field(default=None, ge=0)

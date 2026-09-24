@@ -133,9 +133,15 @@ async def sweep(session: AsyncSession) -> int:
     # Global disk ceiling. Played episodes go first, then the oldest downloads, until the
     # directory is back under the limit. Queued and starred episodes are skipped here too:
     # being over the ceiling does not override an explicit "keep this".
+    # Both copies count. The processed file sits beside the original and the storage
+    # panel adds it in; a ceiling that only saw originals let the directory run past it
+    # by the size of every trimmed copy.
     ceiling = app_settings.download_dir_max_bytes
     if ceiling:
-        total = sum(episode.local_bytes or 0 for episode, _ in survivors)
+        total = sum(
+            (episode.local_bytes or 0) + (episode.processed_bytes or 0)
+            for episode, _ in survivors
+        )
         if total > ceiling:
             ordered = sorted(
                 survivors,
@@ -149,7 +155,7 @@ async def sweep(session: AsyncSession) -> int:
                     break
                 if episode.id in protected:
                     continue
-                size = episode.local_bytes or 0
+                size = (episode.local_bytes or 0) + (episode.processed_bytes or 0)
                 if await purge_episode(session, episode, reason="ceiling"):
                     total -= size
                     purged += 1
@@ -158,9 +164,10 @@ async def sweep(session: AsyncSession) -> int:
 
     on_disk = (
         await session.execute(
-            select(func.coalesce(func.sum(Episode.local_bytes), 0)).where(
-                Episode.local_path.is_not(None)
-            )
+            select(
+                func.coalesce(func.sum(Episode.local_bytes), 0)
+                + func.coalesce(func.sum(Episode.processed_bytes), 0)
+            ).where(Episode.local_path.is_not(None))
         )
     ).scalar_one()
     download_dir_bytes.set(int(on_disk or 0))
