@@ -34,6 +34,8 @@
 #         VAPID_*              optional; notifications stay off without them. See
 #                              NOTIFICATIONS at the bottom.
 #         BACKUP_KEEP          optional; nightly dumps to retain, default 14
+#         TRUST_PROXY_HEADERS  optional; true only when a reverse proxy you control
+#                              sits in front and sets X-Forwarded-For
 #         METRICS_TOKEN        optional; when set, /metrics requires it as a bearer token.
 #                              Worth setting (or blocking /metrics in Cloudflare) now that
 #                              the app is reachable from the internet.

@@ -403,20 +403,23 @@ class AppSettings(Base):
 class LoginAttempt(Base):
     """Every login try, so repeated failures can be throttled.
 
-    Recorded per username rather than per client address. Behind a proxy the address is
-    whatever a header claims, and the only way to trust it is to trust the proxy and
-    validate the chain -- worth doing for a multi-user service, but here there is exactly
-    one account, so throttling it is throttling everything an attacker can try.
+    Recorded per username and per client address, and each has its own limit. The
+    username limit is what stops guessing at the one account that exists. The address
+    limit is what stops a caller inventing a new username per request to keep the server
+    hashing: every failure it costs a hash, and without a limit on the source there was
+    nothing to make it stop.
 
-    The trade is that someone who can reach the login form can lock the real user out for
-    the window. For a single-user server that is the better failure: a quarter of an hour
-    of annoyance against an unlimited guessing rate.
+    The address is the connection's, or the first X-Forwarded-For entry when
+    TRUST_PROXY_HEADERS says a proxy in front can be believed. Behind a proxy that is
+    not trusted, every client shares the proxy's address and the source limit is one
+    shared allowance -- still a limit, and the username limit still holds.
     """
 
     __tablename__ = "login_attempts"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     username: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source: Mapped[str | None] = mapped_column(String(64), index=True)
     succeeded: Mapped[bool] = mapped_column(Boolean, nullable=False)
     attempted_at: Mapped[datetime] = _now_col(nullable=False, index=True)
 

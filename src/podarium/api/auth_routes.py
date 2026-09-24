@@ -18,7 +18,7 @@ from podarium.auth import (
 from podarium.config import Settings, get_settings
 from podarium.db import get_session
 from podarium.models import ApiToken, User
-from podarium.throttle import record_attempt, seconds_until_unlocked
+from podarium.throttle import client_source, record_attempt, seconds_until_unlocked
 from podarium.totp import (
     decrypt_secret,
     encrypt_secret,
@@ -41,6 +41,8 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 # Hashed once at import, from a value nobody knows. See login().
 _UNKNOWN_USER_HASH = hash_password(secrets.token_hex(32))
+# How many password checks may run at once, whatever the login form is sent.
+_hashing = asyncio.Semaphore(2)
 
 
 def _user_out(user: User) -> UserOut:
@@ -60,7 +62,8 @@ async def login(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> UserOut:
-    wait = await seconds_until_unlocked(session, body.username)
+    source = client_source(request)
+    wait = await seconds_until_unlocked(session, body.username, source)
     if wait:
         # 429 rather than 401, so a client can tell "too many tries" from "wrong password"
         # and stop retrying. Checked before the password so a locked account cannot be
@@ -78,15 +81,18 @@ async def login(
         # Verified against a throwaway hash so an unknown name takes as long as a wrong
         # password. Skipping the work here made the two distinguishable by the clock,
         # whatever the response body said.
-        await asyncio.to_thread(verify_password, _UNKNOWN_USER_HASH, body.password)
+        async with _hashing:
+            await asyncio.to_thread(verify_password, _UNKNOWN_USER_HASH, body.password)
         ok = False
     else:
-        # Off the event loop: argon2 is a deliberate hundred milliseconds of work, and
-        # done inline it stalled every stream this process was serving for each sign-in.
-        ok = await asyncio.to_thread(verify_password, user.password_hash, body.password)
+        # Off the event loop, and no more than a couple at once: argon2 is a deliberate
+        # hundred milliseconds of work, and a burst of sign-ins used to be a burst of
+        # busy cores under the streams this process was serving.
+        async with _hashing:
+            ok = await asyncio.to_thread(verify_password, user.password_hash, body.password)
 
     if not ok:
-        await record_attempt(session, body.username, succeeded=False)
+        await record_attempt(session, body.username, succeeded=False, source=source)
         # Identical in body and in timing whether the username exists or the password is
         # wrong.
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -97,7 +103,7 @@ async def login(
             # SECRET_KEY has changed since the secret was stored, so it can no longer be
             # read. Failing closed with a distinct message, rather than pretending the code
             # was wrong, is the difference between a fixable problem and a mystery.
-            await record_attempt(session, body.username, succeeded=False)
+            await record_attempt(session, body.username, succeeded=False, source=source)
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED,
                 detail=(
@@ -109,14 +115,14 @@ async def login(
         if not body.totp_code:
             # A wrong password and a missing code both leave you signed out, but only one
             # of them means "now show me the code field".
-            await record_attempt(session, body.username, succeeded=False)
+            await record_attempt(session, body.username, succeeded=False, source=source)
             raise HTTPException(
                 status.HTTP_401_UNAUTHORIZED, detail="totp_required"
             )
 
         step = verify_totp(secret, body.totp_code, last_step=user.totp_last_step)
         if step is None:
-            await record_attempt(session, body.username, succeeded=False)
+            await record_attempt(session, body.username, succeeded=False, source=source)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
 
         # Remember the step, so this code cannot be used again inside its window. As one
@@ -131,11 +137,11 @@ async def login(
             .execution_options(synchronize_session=False)
         )
         if claimed.rowcount != 1:
-            await record_attempt(session, body.username, succeeded=False)
+            await record_attempt(session, body.username, succeeded=False, source=source)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
         user.totp_last_step = step
 
-    await record_attempt(session, body.username, succeeded=True)
+    await record_attempt(session, body.username, succeeded=True, source=source)
     issue_session_cookie(response, user, settings, secure=request_is_secure(request))
     return _user_out(user)
 

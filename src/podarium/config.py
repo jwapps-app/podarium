@@ -68,6 +68,10 @@ class Settings(BaseSettings):
     download_concurrency: int = 2
     retention_sweep_minutes: int = 60
     http_timeout_seconds: float = 30.0
+    # Believe X-Forwarded-For. Only when a reverse proxy this server trusts sets it:
+    # trusting it from the open network lets a caller pick its own address, and the
+    # per-address login limit then limits nothing.
+    trust_proxy_headers: bool = False
     # Whole-operation deadlines, on top of the per-read timeout above. A peer that sends
     # a byte every twenty seconds never trips a read timeout and used to hold a worker
     # for as long as it liked.

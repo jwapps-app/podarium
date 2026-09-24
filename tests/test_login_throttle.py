@@ -117,3 +117,34 @@ async def test_attempts_are_recorded_for_inspection(session, client):
 
     rows = (await session.execute(select(LoginAttempt).order_by(LoginAttempt.id))).scalars().all()
     assert [r.succeeded for r in rows] == [False, True]
+
+
+
+async def test_inventing_usernames_does_not_buy_unlimited_hashing(client):
+    """The per-username limit never trips for a caller who never repeats a name. The
+    per-address one does."""
+    from podarium.throttle import SOURCE_MAX_FAILURES
+
+    for n in range(SOURCE_MAX_FAILURES):
+        assert (await attempt(client, "wrong", username=f"nobody-{n}")).status_code == 401
+
+    response = await attempt(client, "wrong", username="nobody-else")
+    assert response.status_code == 429
+    assert int(response.headers["Retry-After"]) > 0
+
+    # The real account is caught by the same lock: the address is what is silenced.
+    assert (await attempt(client, PASSWORD)).status_code == 429
+
+
+async def test_a_forwarded_address_is_believed_only_when_told_to(client, monkeypatch):
+    from podarium.config import get_settings
+    from podarium.throttle import SOURCE_MAX_FAILURES
+
+    # Not trusted: the header changes nothing, every request is one source.
+    for n in range(SOURCE_MAX_FAILURES):
+        await client.post(
+            "/api/auth/login",
+            json={"username": f"nobody-{n}", "password": "wrong"},
+            headers={"X-Forwarded-For": f"10.0.0.{n}"},
+        )
+    assert (await attempt(client, "wrong", username="nobody-else")).status_code == 429
