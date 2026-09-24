@@ -701,21 +701,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const audio = audioRef.current;
       const current = episodeRef.current;
       if (!audio || !current) return;
-      // fetch() is cancelled on unload; sendBeacon is the only reliable last write.
-      navigator.sendBeacon?.(
-        `/api/episodes/${current.id}/state`,
-        new Blob(
-          [
-            JSON.stringify({
-              position_seconds: Math.floor(audio.currentTime),
-              // A beacon is queued by the browser and sent whenever it manages to; without
-              // this it would arrive undated and overwrite whatever happened in between.
-              changed_at: new Date().toISOString(),
-            }),
-          ],
-          { type: "application/json" },
-        ),
-      );
+      // A keepalive fetch outlives the page the way a beacon does, and unlike a beacon it
+      // can say PUT. sendBeacon can only POST, and the state route only takes PUT, so
+      // the "last write" this used to send was answered 405 every single time.
+      const listened = Math.floor(listenedRef.current);
+      if (listened > 0) listenedRef.current -= listened;
+      void fetch(`/api/episodes/${current.id}/state`, {
+        method: "PUT",
+        keepalive: true,
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          position_seconds: Math.floor(audio.currentTime),
+          ...(listened > 0 ? { listened_delta: listened } : {}),
+          // Sent whenever the browser gets to it; without a date it would arrive as "now"
+          // and overwrite whatever happened in between.
+          changed_at: new Date().toISOString(),
+        }),
+      }).catch(() => {});
     };
     window.addEventListener("pagehide", onUnload);
     return () => window.removeEventListener("pagehide", onUnload);
