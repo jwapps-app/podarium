@@ -210,3 +210,43 @@ class TestValidationErrorsDoNotEchoInput:
         message = response.json()["error"]["message"]
         assert "12345" not in message
         assert "password" in message
+
+
+class TestLogoutEndsTheSession:
+    async def test_logout_clears_the_cookie_it_was_sent(self, session):
+        """The handler cleared the cookie on one response and returned another, so the
+        deletion header never left the server and "logout" left the browser signed in."""
+        from podarium.auth import hash_password
+        from podarium.models import User
+
+        session.add(User(username="jw", password_hash=hash_password("correct horse")))
+        await session.commit()
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as browser:
+            login = await browser.post(
+                "/api/auth/login", json={"username": "jw", "password": "correct horse"}
+            )
+            assert login.status_code == 200
+            assert (await browser.get("/api/auth/me")).status_code == 200
+
+            response = await browser.post("/api/auth/logout")
+            assert response.status_code == 204
+            assert "set-cookie" in response.headers, "deletion header must be on the response sent"
+
+            assert (await browser.get("/api/auth/me")).status_code == 401
+
+
+class TestThePublishedPlaceholderIsRefused:
+    def test_the_env_example_value_will_not_start_a_deployment(self):
+        from types import SimpleNamespace
+
+        from podarium.main import check_secret_key
+
+        placeholder = SimpleNamespace(
+            secret_key="change-me-to-a-long-random-string", run_background_jobs=True
+        )
+        with pytest.raises(RuntimeError, match="SECRET_KEY"):
+            check_secret_key(placeholder)
+        with pytest.raises(RuntimeError, match="SECRET_KEY"):
+            check_secret_key(SimpleNamespace(secret_key="", run_background_jobs=True))

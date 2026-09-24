@@ -124,9 +124,13 @@ async def login(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response, settings: Settings = Depends(get_settings)) -> Response:
+async def logout(settings: Settings = Depends(get_settings)) -> Response:
+    # The cookie is cleared on the response actually returned. Clearing it on the injected
+    # one and returning a fresh Response discarded the header, and "logout" left the
+    # browser signed in.
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
     clear_session_cookie(response, settings)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return response
 
 
 @router.get("/me", response_model=UserOut)

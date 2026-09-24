@@ -41,7 +41,7 @@ from podarium.clients.podcastindex import (
     describe_credential_problems,
     verify_credentials,
 )
-from podarium.config import INSECURE_SECRET_KEY, get_settings
+from podarium.config import INSECURE_SECRET_KEYS, get_settings
 from podarium.db import get_sessionmaker
 from podarium.jobs.audio import processing_loop
 from podarium.jobs.downloader import download_workers
@@ -62,10 +62,10 @@ def check_secret_key(settings) -> None:
     published key. Tests run without background jobs and are exempt; everything else is
     a real deployment and must have its own key.
     """
-    if settings.secret_key == INSECURE_SECRET_KEY:
+    if settings.secret_key in INSECURE_SECRET_KEYS:
         if settings.run_background_jobs:
             raise RuntimeError(
-                "SECRET_KEY is the built-in development value. Set it to something "
+                "SECRET_KEY is a published placeholder. Set it to something "
                 "private (openssl rand -hex 32) before starting the server."
             )
         log.warning("SECRET_KEY is the development default; sessions are forgeable")
