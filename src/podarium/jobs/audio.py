@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select
@@ -53,6 +53,33 @@ MIN_PLAUSIBLE_RATIO = 0.2
 # cap, because this is two header reads rather than an encode.
 MEASURE_BATCH = 25
 
+# An episode whose encode failed is left alone for this long. Without it the same
+# broken file was chosen on every pass -- the pass takes the first pending row and the
+# failure changed nothing about it -- and nothing behind it was ever attempted. Kept in
+# memory: a restart is a fair moment to try again.
+FAILURE_BACKOFF = timedelta(hours=6)
+_failed_until: dict[int, datetime] = {}
+
+
+async def _run(command: list[str], *, timeout: float, stderr) -> tuple[int | None, bytes, bytes]:
+    """Run a child to completion, and never leave one behind.
+
+    A timeout used to return with ffprobe still running, and the ffmpeg path killed
+    without waiting. Cancellation -- shutdown -- did neither. Whatever ends the wait,
+    the child is killed and reaped before this returns or raises.
+    """
+    process = await asyncio.create_subprocess_exec(
+        *command, stdout=asyncio.subprocess.PIPE, stderr=stderr
+    )
+    try:
+        stdout, err = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except BaseException:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+        raise
+    return process.returncode, stdout, err or b""
+
 
 async def measure_duration(path: Path) -> float | None:
     """Seconds of audio in a file, from ffprobe.
@@ -62,17 +89,18 @@ async def measure_duration(path: Path) -> float | None:
     from another. An approximation on either side turns the answer into fiction.
     """
     try:
-        process = await asyncio.create_subprocess_exec(
-            "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(path),
-            stdout=asyncio.subprocess.PIPE,
+        returncode, stdout, _ = await _run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            timeout=60,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=60)
-        if process.returncode != 0:
+        if returncode != 0:
             return None
         return float(stdout.decode().strip())
     except (TimeoutError, ValueError, OSError):
@@ -187,43 +215,56 @@ async def process_episode(
 
     started = datetime.now(UTC)
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE
-        )
         try:
-            _, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=PROCESS_TIMEOUT_SECONDS
+            returncode, _, stderr = await _run(
+                command, timeout=PROCESS_TIMEOUT_SECONDS, stderr=asyncio.subprocess.PIPE
             )
         except TimeoutError:
-            process.kill()
             raise ValueError(f"ffmpeg exceeded {PROCESS_TIMEOUT_SECONDS}s") from None
 
-        if process.returncode != 0:
-            raise ValueError((stderr or b"").decode(errors="replace")[:300])
+        if returncode != 0:
+            raise ValueError(stderr.decode(errors="replace")[:300])
 
         size = partial.stat().st_size
         if size == 0:
             raise ValueError("ffmpeg produced an empty file")
 
+        # Both sides, so the time trimming actually saved is a subtraction rather than an
+        # estimate. Measured before the file is accepted, because the plausibility check
+        # below is a comparison of durations.
+        source_duration = await measure_duration(source)
+        processed_duration = await measure_duration(partial)
+
         # Trimming silence removes a few percent of a talk show and rather more of a badly
         # edited one, but it never removes most of it. A result that small means the wrong
         # stream was encoded, which is exactly the failure this catches -- and it is
         # invisible without a check, because the file is valid audio, just the wrong audio.
-        original = episode.local_bytes or source.stat().st_size
-        if original and size < original * MIN_PLAUSIBLE_RATIO:
-            raise ValueError(
-                f"implausible output: {size} bytes from {original}; refusing to use it"
-            )
+        #
+        # Compared by duration where both could be measured. Bytes were the measure once,
+        # and a lossless or high-bitrate source re-encoded to speech MP3 legitimately
+        # lands under a fifth of its size; bytes remain the fallback when ffprobe cannot
+        # read one of the files.
+        if source_duration and processed_duration is not None:
+            if processed_duration < source_duration * MIN_PLAUSIBLE_RATIO:
+                raise ValueError(
+                    f"implausible output: {processed_duration:.0f}s from "
+                    f"{source_duration:.0f}s; refusing to use it"
+                )
+        else:
+            original = episode.local_bytes or source.stat().st_size
+            if original and size < original * MIN_PLAUSIBLE_RATIO:
+                raise ValueError(
+                    f"implausible output: {size} bytes from {original}; refusing to use it"
+                )
 
         partial.replace(target)
         episode.processed_path = str(target)
         episode.processed_bytes = size
         episode.processed_at = datetime.now(UTC)
-        # Both sides, so the time trimming actually saved is a subtraction rather than an
-        # estimate. Failure to measure is not failure to process -- the file is good, the
-        # saving simply goes unreported for that episode.
-        episode.source_duration_seconds = await measure_duration(source)
-        episode.processed_duration_seconds = await measure_duration(target)
+        # Failure to measure is not failure to process -- the file is good, the saving
+        # simply goes unreported for that episode.
+        episode.source_duration_seconds = source_duration
+        episode.processed_duration_seconds = processed_duration
         await _rescale_positions(session, episode)
         await session.commit()
 
@@ -238,6 +279,10 @@ async def process_episode(
             -saved,
         )
         return True
+    except asyncio.CancelledError:
+        # Shutdown mid-encode. Nothing here is worth keeping, and the row is untouched.
+        partial.unlink(missing_ok=True)
+        raise
     except Exception as exc:  # noqa: BLE001 - the original still plays
         partial.unlink(missing_ok=True)
         # Discard whatever was assigned before the failure. The fields above are set one
@@ -332,9 +377,16 @@ async def reconcile_processing(session: AsyncSession, *, limit: int = 1) -> int:
         log.info("measured durations for %s already-processed episodes", measured)
 
     done = 0
+    now = datetime.now(UTC)
+    for episode_id in [k for k, until in _failed_until.items() if until <= now]:
+        del _failed_until[episode_id]
+    pending = [(e, f) for e, f in pending if e.id not in _failed_until]
+
     for episode, feed in pending[:limit]:
         if await process_episode(session, episode, feed, app_settings):
             done += 1
+        else:
+            _failed_until[episode.id] = now + FAILURE_BACKOFF
 
     return done + reclaimed + measured
 
