@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from podarium.jobs.audio import (
+    recipe,
     MIN_PLAUSIBLE_RATIO,
     PROCESSED_SUFFIX,
     _filters,
@@ -64,6 +65,7 @@ class TestFilterChain:
         chain = _filters(trim=True, normalize=False)
         assert f"stop_duration={MIN_SILENCE_SECONDS}" in chain
         assert f"stop_silence={SILENCE_KEEP_SECONDS}" in chain
+        assert "detection=peak" in chain, "the same judge of silence as the map's silencedetect"
         assert _filters(trim=False, normalize=False) == ""
 
 
@@ -142,7 +144,7 @@ class TestReconciliation:
         processed = path.with_suffix(".processed.mp3")
         processed.write_bytes(b"trimmed")
         episode.processed_path = str(processed)
-        episode.processed_recipe = "trim"
+        episode.processed_recipe = recipe(True, False)
         feed.trim_silence = True
         await session.commit()
 
@@ -195,7 +197,7 @@ class TestDurationBackfill:
             local_bytes=8,
             processed_path=str(target),
             processed_bytes=7,
-            processed_recipe="trim",
+            processed_recipe=recipe(True, False),
             # The state an episode processed by the earlier build is left in.
             source_duration_seconds=None,
             processed_duration_seconds=None,

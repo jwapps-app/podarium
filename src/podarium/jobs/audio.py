@@ -36,6 +36,9 @@ MIN_SILENCE_SECONDS = 0.6
 # What is left where silence was removed. Cutting to nothing makes conversation sound
 # unnaturally rushed; leaving a beat keeps the rhythm of speech.
 SILENCE_KEEP_SECONDS = 0.25
+# silenceremove judges silence over windows of this length (its default). It shows up as
+# an extra window's worth of each silence surviving the cut.
+DETECTION_WINDOW_SECONDS = 0.02
 
 # EBU R128, the broadcast standard, and what every levelling tool targets.
 LOUDNESS_TARGET_LUFS = -16
@@ -125,10 +128,16 @@ def _filters(*, trim: bool, normalize: bool) -> str:
             # stop_duration is how long a silence must last to count as one; stop_silence
             # is how much of it is left in. They were one parameter for a while, which
             # removed every quarter-second pause outright and left nothing where it was.
+            #
+            # detection=peak, per sample, because that is how silencedetect judges silence
+            # and the map between the two clocks is built from what silencedetect finds.
+            # With the default RMS the two disagreed on where silence was, and the map
+            # was wrong by a third.
             f"silenceremove=stop_periods=-1"
             f":stop_duration={MIN_SILENCE_SECONDS}"
             f":stop_threshold={SILENCE_THRESHOLD_DB}dB"
             f":stop_silence={SILENCE_KEEP_SECONDS}"
+            f":detection=peak"
         )
     if normalize:
         chain.append(
@@ -149,8 +158,12 @@ def wanted(feed: Feed, app_settings: AppSettings) -> tuple[bool, bool]:
 
 
 def recipe(trim: bool, normalize: bool) -> str | None:
-    """The name a processed file is stamped with, so a changed setting is noticed."""
-    parts = [name for name, on in (("trim", trim), ("normalize", normalize)) if on]
+    """The name a processed file is stamped with, so a changed setting is noticed.
+
+    "trim2": the trim filter changed (per-sample detection, so the clock map is exact),
+    and files cut by the first version are rebuilt by not matching this name.
+    """
+    parts = [name for name, on in (("trim2", trim), ("normalize", normalize)) if on]
     return "+".join(parts) or None
 
 
@@ -448,12 +461,23 @@ def parse_silences(stderr: str) -> list[tuple[float, float]]:
     return silences
 
 
+# What survives of every silence the filter cuts: the stop_duration it copied while
+# deciding, the beat it keeps, and one detection window. Measured, not read from the
+# documentation: a synthetic file with known gaps run through the filter keeps exactly
+# this much of each gap longer than it, and gaps shorter than it entirely.
+SILENCE_SURVIVES_SECONDS = MIN_SILENCE_SECONDS + SILENCE_KEEP_SECONDS + DETECTION_WINDOW_SECONDS
+
+
 def removed_from_silences(silences: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    """What silenceremove cuts from each detected silence: everything past the kept beat."""
+    """What silenceremove cuts from each detected silence.
+
+    A silence at the very start of the file is left whole -- stop mode only acts once
+    audio has been heard -- and every other one loses whatever is past what survives.
+    """
     return [
-        (start + SILENCE_KEEP_SECONDS, end)
+        (start + SILENCE_SURVIVES_SECONDS, end)
         for start, end in silences
-        if end - start > SILENCE_KEEP_SECONDS
+        if start > DETECTION_WINDOW_SECONDS and end - start > SILENCE_SURVIVES_SECONDS
     ]
 
 

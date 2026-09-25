@@ -146,7 +146,7 @@ class TestAProcessedFileRemembersItsRecipe:
         old = _file(feed, "1.processed.mp3", 9)
         episode = Episode(
             feed_id=feed.id, guid="ep-1", local_path=str(source), local_bytes=10,
-            processed_path=str(old), processed_bytes=9, processed_recipe="trim",
+            processed_path=str(old), processed_bytes=9, processed_recipe=audio.recipe(True, False),
             source_duration_seconds=10.0, processed_duration_seconds=9.0,
         )
         session.add(episode)
@@ -167,9 +167,9 @@ class TestAProcessedFileRemembersItsRecipe:
         assert attempted == [episode.id]
 
     def test_recipes_are_named(self):
-        assert audio.recipe(True, False) == "trim"
+        assert audio.recipe(True, False) == "trim2"
         assert audio.recipe(False, True) == "normalize"
-        assert audio.recipe(True, True) == "trim+normalize"
+        assert audio.recipe(True, True) == "trim2+normalize"
         assert audio.recipe(False, False) is None
 
 
