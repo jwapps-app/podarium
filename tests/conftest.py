@@ -79,6 +79,16 @@ async def _database():
 
 
 @pytest.fixture(autouse=True)
+def _modern_ffmpeg(monkeypatch):
+    """The suite describes trimming as it works on ffmpeg 7+. The gate that refuses an
+    older one is tested on its own; everywhere else the machine's ffmpeg is beside the
+    point (CI's runner carries 6)."""
+    from podarium.jobs import audio
+
+    monkeypatch.setattr(audio, "_ffmpeg_major", 7)
+
+
+@pytest.fixture(autouse=True)
 async def _clean_state():
     """Reset the database *and* the media directories between tests.
 

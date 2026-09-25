@@ -16,6 +16,7 @@ import re
 import json
 import logging
 import shutil
+import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -112,8 +113,43 @@ async def measure_duration(path: Path) -> float | None:
         return None
 
 
+# The silenceremove filter was rewritten between ffmpeg 5.1 and 7. On the old one the
+# options this code sends mean something else entirely: every pause in speech, however
+# short, is cut down to a quarter of a second, and there is no combination of options
+# that makes it keep a pause whole. Discovered the hard way, on a server whose image
+# carried Debian's 5.1 while the filter had been measured on 9.
+MIN_FFMPEG_MAJOR = 7
+_ffmpeg_major: int | None = None
+
+
+def ffmpeg_major_version() -> int | None:
+    """The installed ffmpeg's major version, or None when it is missing or unreadable."""
+    global _ffmpeg_major
+    if _ffmpeg_major is not None:
+        return _ffmpeg_major
+    path = shutil.which("ffmpeg")
+    if path is None:
+        return None
+    try:
+        banner = subprocess.run([path, "-version"], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    match = re.search(r"ffmpeg version (?:n)?(\d+)\.", banner)
+    if not match:
+        return None
+    _ffmpeg_major = int(match.group(1))
+    return _ffmpeg_major
+
+
 def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
+
+
+def trimming_available() -> bool:
+    """Whether silence may be trimmed here: an ffmpeg whose filter means what this code
+    says. Levelling is fine on any version; loudnorm has not changed."""
+    major = ffmpeg_major_version()
+    return major is not None and major >= MIN_FFMPEG_MAJOR
 
 
 def _filters(*, trim: bool, normalize: bool) -> str:
@@ -147,8 +183,14 @@ def _filters(*, trim: bool, normalize: bool) -> str:
 
 
 def wanted(feed: Feed, app_settings: AppSettings) -> tuple[bool, bool]:
-    """(trim, normalize) for a feed, resolving NULL against the globals."""
+    """(trim, normalize) for a feed, resolving NULL against the globals.
+
+    Trimming is only ever wanted where the installed ffmpeg can do it as meant; on an
+    older one the setting stands but produces nothing, and the original is served.
+    """
     trim = feed.trim_silence if feed.trim_silence is not None else app_settings.global_trim_silence
+    if trim and not trimming_available():
+        trim = False
     normalize = (
         feed.normalize_audio
         if feed.normalize_audio is not None
@@ -160,10 +202,11 @@ def wanted(feed: Feed, app_settings: AppSettings) -> tuple[bool, bool]:
 def recipe(trim: bool, normalize: bool) -> str | None:
     """The name a processed file is stamped with, so a changed setting is noticed.
 
-    "trim2": the trim filter changed (per-sample detection, so the clock map is exact),
-    and files cut by the first version are rebuilt by not matching this name.
+    The number moves whenever the trim changes meaning, and files cut under the old
+    meaning are rebuilt by not matching: "trim2" was per-sample detection, "trim3" is
+    the first cut by an ffmpeg whose filter keeps pauses whole.
     """
-    parts = [name for name, on in (("trim2", trim), ("normalize", normalize)) if on]
+    parts = [name for name, on in (("trim3", trim), ("normalize", normalize)) if on]
     return "+".join(parts) or None
 
 
@@ -429,6 +472,12 @@ async def processing_loop(stop: asyncio.Event, idle_seconds: int = 300) -> None:
     if not ffmpeg_available():
         log.info("ffmpeg not installed; audio processing disabled")
         return
+    if not trimming_available():
+        log.error(
+            "ffmpeg %s is too old to trim silence as this server means it (needs %s or newer); "
+            "trimming is off until it is upgraded, levelling still works",
+            ffmpeg_major_version(), MIN_FFMPEG_MAJOR,
+        )
 
     sessionmaker = get_sessionmaker()
     while not stop.is_set():

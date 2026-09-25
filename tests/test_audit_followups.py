@@ -167,9 +167,9 @@ class TestAProcessedFileRemembersItsRecipe:
         assert attempted == [episode.id]
 
     def test_recipes_are_named(self):
-        assert audio.recipe(True, False) == "trim2"
+        assert audio.recipe(True, False) == "trim3"
         assert audio.recipe(False, True) == "normalize"
-        assert audio.recipe(True, True) == "trim2+normalize"
+        assert audio.recipe(True, True) == "trim3+normalize"
         assert audio.recipe(False, False) is None
 
 
@@ -241,3 +241,29 @@ class TestArtworkIsAskedForAgain:
             entry = await ensure_artwork(session, url, user_agent="test")
             assert Path(entry.local_path).read_bytes() == newer
             assert (await session.execute(select(ArtworkCache))).scalar_one().local_path == entry.local_path
+
+
+class TestTrimmingNeedsAModernFfmpeg:
+    async def test_an_old_ffmpeg_turns_trimming_off_and_leaves_levelling(self, session, monkeypatch):
+        from podarium.models import AppSettings
+
+        monkeypatch.setattr(audio, "_ffmpeg_major", 5)
+        settings_row = AppSettings(global_trim_silence=True, global_normalize_audio=True)
+        feed = Feed(feed_url="https://a.example/f.xml", title="Show")
+        assert audio.wanted(feed, settings_row) == (False, True)
+
+        monkeypatch.setattr(audio, "_ffmpeg_major", 7)
+        assert audio.wanted(feed, settings_row) == (True, True)
+
+    def test_the_version_is_read_from_the_banner(self, monkeypatch):
+        import subprocess as sp
+        from types import SimpleNamespace
+
+        monkeypatch.setattr(audio, "_ffmpeg_major", None)
+        monkeypatch.setattr(audio.shutil, "which", lambda name: "/usr/bin/ffmpeg")
+        monkeypatch.setattr(sp, "run", lambda *a, **k: SimpleNamespace(stdout="ffmpeg version 5.1.9-0+deb12u1 Copyright"))
+        assert audio.ffmpeg_major_version() == 5
+        monkeypatch.setattr(audio, "_ffmpeg_major", None)
+        monkeypatch.setattr(sp, "run", lambda *a, **k: SimpleNamespace(stdout="ffmpeg version n7.1.2 Copyright"))
+        assert audio.ffmpeg_major_version() == 7
+        monkeypatch.setattr(audio, "_ffmpeg_major", None)

@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 
 # ---------------------------------------------------------------- runtime
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-trixie
 
 # Which commit produced this image. Stamped by CI and logged on every boot, so
 # "did my repull actually take?" is answerable from the host without guessing at
@@ -54,6 +54,11 @@ ENV PATH="/opt/venv/bin:$PATH" \
 # ffmpeg is for trimming silence and levelling loudness after a download. It is the
 # largest thing in this image by some way (~100 MB unpacked); without it those settings
 # report themselves unavailable and everything else works exactly as before.
+#
+# trixie, not bookworm, for its ffmpeg 7.1. The silenceremove filter was rewritten
+# between 5.1 and 7: on 5.1 the same options cut every pause in speech down to a
+# quarter of a second, and there is no set of options that makes 5.1 keep a pause
+# whole. The trimming code refuses anything older than 7.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ffmpeg && \
     rm -rf /var/lib/apt/lists/*
