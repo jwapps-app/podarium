@@ -15,7 +15,7 @@ import pytest
 from podarium import timeline
 from podarium.auth import current_user
 from podarium.jobs import audio
-from podarium.jobs.audio import map_is_credible, parse_silences, removed_from_silences
+from podarium.jobs.audio import SILENCE_SURVIVES_SECONDS, map_is_credible, parse_silences, removed_from_silences
 from podarium.main import app
 from podarium.models import Episode, EpisodeState, Feed
 
@@ -52,10 +52,11 @@ class TestTheMap:
         )
         silences = parse_silences(stderr)
         assert silences == [(100.0, 110.0), (300.5, 300.6)]
-        assert removed_from_silences(silences) == [(100.87, 110.0)]
+        assert removed_from_silences(silences) == [(100 + SILENCE_SURVIVES_SECONDS, 110.0)]
 
     def test_a_leading_silence_and_a_short_one_are_not_cuts(self):
-        assert removed_from_silences([(0.0, 5.0), (50.0, 50.8), (60.0, 61.0)]) == [(60.87, 61.0)]
+        kept = SILENCE_SURVIVES_SECONDS
+        assert removed_from_silences([(0.0, 5.0), (50.0, 50.0 + kept / 2), (60.0, 61.0)]) == [(60.0 + kept, 61.0)]
 
     def test_a_map_that_does_not_add_up_is_not_trusted(self):
         removed = [(100.0, 110.0)]

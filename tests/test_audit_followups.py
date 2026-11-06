@@ -167,9 +167,9 @@ class TestAProcessedFileRemembersItsRecipe:
         assert attempted == [episode.id]
 
     def test_recipes_are_named(self):
-        assert audio.recipe(True, False) == "trim3"
+        assert audio.recipe(True, False) == "trim4"
         assert audio.recipe(False, True) == "normalize"
-        assert audio.recipe(True, True) == "trim3+normalize"
+        assert audio.recipe(True, True) == "trim4+normalize"
         assert audio.recipe(False, False) is None
 
 
