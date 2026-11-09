@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+from pathlib import Path
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -244,6 +246,32 @@ for module in (
 # extension; the slim Debian image the container is built from may not, and a manifest
 # served as octet-stream is ignored, which would quietly cost the home-screen install.
 mimetypes.add_type("application/manifest+json", ".webmanifest")
+
+
+_BUNDLE = re.compile(r"/assets/(index-[A-Za-z0-9_-]+\.js)")
+
+
+def web_bundle_name(index_html: Path) -> str | None:
+    """The script the current index.html loads, which names the web build."""
+    try:
+        match = _BUNDLE.search(index_html.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+    return match.group(1) if match else None
+
+
+@app.get("/api/version", include_in_schema=False)
+async def version() -> dict[str, str | None]:
+    """Which web build this server is handing out.
+
+    An open page asks this to learn that it has been outlived. A tab left open across an
+    update goes on running the old code against the new server until someone reloads it,
+    and old code has done damage that way: its closing write overwrote a position the
+    fixed code would have left alone. Under /api because the service worker never caches
+    that path -- asked for "/", it would answer with the page's own stale shell. No
+    sign-in needed: the name is in the HTML anyone can fetch.
+    """
+    return {"web": web_bundle_name(get_settings().web_dir / "index.html")}
 
 
 # The built web UI, when one is present.

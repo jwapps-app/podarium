@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
+import { stayFresh } from "./lib/freshness";
 import { registerServiceWorker } from "./lib/offline";
 import { OfflineProvider } from "./lib/offlineStore";
 import "./styles.css";
@@ -42,3 +43,6 @@ createRoot(document.getElementById("root")!).render(
 // After render, so registering never delays first paint. The worker only matters on the
 // second visit anyway -- there is nothing cached on the first.
 void registerServiceWorker();
+
+// A tab left open across a server update reloads itself once it is idle and in view.
+stayFresh();
