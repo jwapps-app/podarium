@@ -79,9 +79,19 @@ def _ratio(episode: Episode) -> float | None:
 
 def outbound(episode: Episode, seconds: int | float | None) -> int | None:
     """A stored (original-clock) second, as the served copy's clock reads it."""
+    return on_clock(episode, seconds, served_version(episode))
+
+
+def on_clock(episode: Episode, seconds: int | float | None, version: str | None) -> int | None:
+    """A stored (original-clock) second, on the clock of the copy a client names.
+
+    A client does not always hold the copy served today: a phone keeps the original it
+    downloaded long after the server has trimmed the episode. Asked for a position, it
+    needs the answer on its own file's clock.
+    """
     if seconds is None:
         return None
-    if served_version(episode) != PROCESSED:
+    if version != PROCESSED or not episode.processed_path:
         return int(seconds)
     intervals = removed_intervals(episode)
     if intervals is not None:

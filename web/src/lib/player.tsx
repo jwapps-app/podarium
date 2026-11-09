@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 
 import { api } from "./api";
 import { audioVersion } from "./audioVersion";
+import { decideHandover, finalWriteNeeded } from "./handover";
 import { sponsorSkipTarget } from "./chapters";
 import { shouldHonorPlatformResume, useMediaSession } from "./mediaSession";
 import type { Chapter, Episode } from "./types";
@@ -158,6 +159,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   // tick. See the timeupdate handler for why this is measured rather than derived.
   const listenedRef = useRef(0);
   const lastTickRef = useRef<number | null>(null);
+  // When the playhead last moved because someone was listening or scrubbing, which is
+  // the moment a position describes -- not the moment it happens to be sent.
+  const lastProgressAtRef = useRef<number | null>(null);
+  // When play was last pressed on a paused episode, and whether the server is being
+  // asked where the episode is. See handover.ts.
+  const resumedAtRef = useRef<number | null>(null);
+  const reconcilingRef = useRef(false);
   const advanceRef = useRef<(() => Episode | null) | null>(null);
   const rateRef = useRef(1);
 
@@ -180,6 +188,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Called from cue() and resume(), which are defined before it can be.
+  const reconcileRef = useRef<() => Promise<void>>(async () => {});
+
   const reportPosition = useCallback(
     (seconds: number, options: { played?: boolean; force?: boolean } = {}) => {
       const current = episodeRef.current;
@@ -189,6 +200,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!options.force && !options.played && Math.abs(rounded - lastReportedRef.current) < 5) {
         return;
       }
+      // Not while the server is being asked where this episode is: the position in hand
+      // may be about to be replaced, and reporting it first is the overwrite that asking
+      // exists to prevent.
+      if (reconcilingRef.current && !options.force && !options.played) return;
       const previouslyReported = lastReportedRef.current;
       lastReportedRef.current = rounded;
 
@@ -263,7 +278,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setError(null);
 
       if (episodeRef.current?.id === next.id) {
-        if (autoplay) void audio.play().catch((cause) => setError(String(cause)));
+        if (autoplay) {
+          if (audio.paused) resumedAtRef.current = Date.now();
+          void audio.play().catch((cause) => setError(String(cause)));
+          void reconcileRef.current();
+        }
         return;
       }
 
@@ -327,7 +346,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const audio = audioRef.current;
     if (!audio || !episodeRef.current) return;
     if (audio.paused) {
+      // Played at once, inside the gesture, and the server asked alongside: its answer
+      // lands a moment into playback and moves the playhead if another device got
+      // further. Waiting for the answer first would lose the gesture a browser demands.
+      resumedAtRef.current = Date.now();
       void audio.play().catch((cause) => setError(String(cause)));
+      void reconcileRef.current();
     }
   }, []);
 
@@ -353,6 +377,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const bounded = Math.max(0, Math.min(seconds, audio.duration || seconds));
     audio.currentTime = bounded;
     setPosition(bounded);
+    lastProgressAtRef.current = Date.now();
   }, []);
 
   const skip = useCallback(
@@ -423,22 +448,86 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (audioRef.current) audioRef.current.playbackRate = defaultRate;
   }, [defaultRate]);
 
-  const stop = useCallback(() => {
+  /** Let go of the episode without a word to the server. */
+  const unload = useCallback(() => {
     const audio = audioRef.current;
+    // Cleared first: the pause below fires a handler that reports, and with no episode
+    // in hand it has nothing to report.
+    episodeRef.current = null;
     if (audio) {
-      reportPosition(audio.currentTime, { force: true });
       audio.pause();
       loadGenRef.current += 1;
       audio.removeAttribute("src");
       audio.load();
     }
-    episodeRef.current = null;
     setEpisode(null);
     setPlaying(false);
     setPosition(0);
     setExpanded(false);
     setSessionActive(false);
-  }, [reportPosition]);
+  }, []);
+
+  const stop = useCallback(() => {
+    const audio = audioRef.current;
+    if (audio) reportPosition(audio.currentTime, { force: true });
+    unload();
+  }, [reportPosition, unload]);
+
+  /** Ask the server where the episode in hand is, and go there if it has moved.
+   *
+   *  Run when the page comes back into view and when play is pressed on a paused
+   *  episode. See handover.ts for why and for the decision itself.
+   */
+  const reconcile = useCallback(async () => {
+    const audio = audioRef.current;
+    const current = episodeRef.current;
+    if (!audio || !current || reconcilingRef.current) return;
+
+    reconcilingRef.current = true;
+    try {
+      const server = await api.position(current.id, audioVersion(current.stream_url));
+      if (episodeRef.current?.id !== current.id) return;
+
+      const decision = decideHandover(
+        {
+          position: audio.currentTime,
+          paused: audio.paused,
+          resumedAgoMs: resumedAtRef.current === null ? null : Date.now() - resumedAtRef.current,
+        },
+        server,
+      );
+      if (decision.kind === "unload") {
+        unload();
+        queryClient.invalidateQueries({ queryKey: ["episodes"] });
+        queryClient.invalidateQueries({ queryKey: ["queue"] });
+      } else if (decision.kind === "seek") {
+        audio.currentTime = decision.to;
+        setPosition(decision.to);
+        // Already the server's, so not something to send back to it.
+        lastReportedRef.current = Math.floor(decision.to);
+        lastTickRef.current = null;
+      }
+    } catch {
+      // Unreachable server: carry on from the position in hand, as before.
+    } finally {
+      reconcilingRef.current = false;
+    }
+  }, [queryClient, unload]);
+  reconcileRef.current = reconcile;
+
+  useEffect(() => {
+    const onReturn = () => {
+      if (document.visibilityState === "visible") void reconcile();
+    };
+    document.addEventListener("visibilitychange", onReturn);
+    window.addEventListener("pageshow", onReturn);
+    window.addEventListener("focus", onReturn);
+    return () => {
+      document.removeEventListener("visibilitychange", onReturn);
+      window.removeEventListener("pageshow", onReturn);
+      window.removeEventListener("focus", onReturn);
+    };
+  }, [reconcile]);
 
   const setSleepTimer = useCallback((minutes: number | "episode" | null) => {
     if (minutes === null) {
@@ -519,6 +608,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const advanced = audio.currentTime - previous;
         if (advanced > 0 && advanced <= MAX_TICK_SECONDS) {
           listenedRef.current += advanced;
+          lastProgressAtRef.current = Date.now();
         }
       }
 
@@ -729,6 +819,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // A keepalive fetch outlives the page the way a beacon does, and unlike a beacon it
       // can say PUT. sendBeacon can only POST, and the state route only takes PUT, so
       // the "last write" this used to send was answered 405 every single time.
+      // Only what the server has not been told. A page that has been sitting paused
+      // reported when it paused; saying it again now, dated now, overwrote whatever
+      // another device had done with the episode since.
+      if (!finalWriteNeeded(audio.currentTime, lastReportedRef.current, listenedRef.current)) {
+        return;
+      }
       const listened = Math.floor(listenedRef.current);
       if (listened > 0) listenedRef.current -= listened;
       void fetch(`/api/episodes/${current.id}/state`, {
@@ -740,9 +836,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           position_seconds: Math.floor(audio.currentTime),
           audio_version: audioVersion(current.stream_url),
           ...(listened > 0 ? { listened_delta: listened } : {}),
-          // Sent whenever the browser gets to it; without a date it would arrive as "now"
-          // and overwrite whatever happened in between.
-          changed_at: new Date().toISOString(),
+          // Dated when the playhead last moved, not when the page closed: the server
+          // sets a late write aside if another device has done something since.
+          changed_at: new Date(lastProgressAtRef.current ?? Date.now()).toISOString(),
         }),
       }).catch(() => {});
     };

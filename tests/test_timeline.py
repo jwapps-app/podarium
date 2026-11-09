@@ -158,3 +158,25 @@ class TestTheEdges:
         state = await session.get(EpisodeState, {"user_id": 1, "episode_id": episode.id})
         await session.refresh(state)
         assert state.position_seconds == 1000
+
+
+class TestAskingWhereAnEpisodeIs:
+    """What a player asks before resuming: another device may have moved on since."""
+
+    async def test_the_answer_is_on_the_clock_of_the_copy_named(self, trimmed):
+        client, episode = trimmed
+        await client.put(f"/api/episodes/{episode.id}/state", json={"position_seconds": 400, "audio_version": "o"})
+
+        on_original = (await client.get(f"/api/episodes/{episode.id}/position", params={"v": "o"})).json()
+        on_trimmed = (await client.get(f"/api/episodes/{episode.id}/position", params={"v": "p"})).json()
+        served = (await client.get(f"/api/episodes/{episode.id}/position")).json()
+
+        assert (on_original["position_seconds"], on_original["audio_version"]) == (400, "o")
+        assert (on_trimmed["position_seconds"], on_trimmed["audio_version"]) == (385, "p")
+        assert served == on_trimmed
+        assert on_original["played"] is False and on_original["changed_at"] is not None
+
+    async def test_an_episode_never_touched_is_at_the_start(self, trimmed):
+        client, episode = trimmed
+        answer = (await client.get(f"/api/episodes/{episode.id}/position")).json()
+        assert answer["position_seconds"] == 0 and answer["played"] is False and answer["changed_at"] is None

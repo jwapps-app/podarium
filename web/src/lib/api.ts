@@ -1,3 +1,4 @@
+import type { ServerPosition } from "./handover";
 import type {
   ApiTokenSummary,
   AppSettings,
@@ -218,6 +219,10 @@ export const api = {
     request<EpisodeList>(`/api/episodes${query({ ...filters, notes: false })}`),
 
   episode: (id: number) => request<Episode>(`/api/episodes/${id}`),
+
+  /** Where an episode is now, on the clock of the copy named. Asked before resuming. */
+  position: (id: number, version?: "o" | "p") =>
+    request<ServerPosition>(`/api/episodes/${id}/position${query({ v: version })}`),
 
   chapters: (id: number) =>
     request<{ chapters: Chapter[] }>(`/api/episodes/${id}/chapters`),

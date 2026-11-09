@@ -1,5 +1,7 @@
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -261,6 +263,43 @@ async def get_episode(
     episode = await _get_episode_or_404(session, episode_id)
     state = await session.get(EpisodeState, {"user_id": user.id, "episode_id": episode_id})
     return episode_out(episode, state)
+
+
+class PositionOut(BaseModel):
+    position_seconds: int
+    played: bool
+    # The clock position_seconds is on: the copy the client named, or the served one.
+    audio_version: str
+    # When the stored position was made, by whichever device made it.
+    changed_at: datetime | None
+
+
+@router.get("/{episode_id}/position", response_model=PositionOut)
+async def get_position(
+    episode_id: int,
+    v: Literal["o", "p"] | None = Query(default=None),
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PositionOut:
+    """Where this episode is now, on the clock of the copy the caller holds.
+
+    What a player asks before it resumes. A player that has been sitting paused knows
+    only where *it* stopped; another device may have carried the episode on since, and
+    resuming from the old place then reports the old place as new and takes the other
+    device's progress back with it. ``v`` names the copy the player holds, because a
+    position on the trimmed clock is the wrong second in an original.
+    """
+    episode = await _get_episode_or_404(session, episode_id)
+    state = await session.get(EpisodeState, {"user_id": user.id, "episode_id": episode_id})
+    version = v or timeline.served_version(episode)
+    if version == timeline.PROCESSED and not episode.processed_path:
+        version = timeline.ORIGINAL
+    return PositionOut(
+        position_seconds=timeline.on_clock(episode, state.position_seconds, version) if state else 0,
+        played=bool(state.played) if state else False,
+        audio_version=version,
+        changed_at=(state.changed_at or state.updated_at) if state else None,
+    )
 
 
 @router.get("/{episode_id}/chapters", response_model=ChaptersOut)
