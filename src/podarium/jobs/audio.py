@@ -32,18 +32,25 @@ log = logging.getLogger("podarium")
 # Anything quieter than this, for longer than this, is dead air rather than a pause for
 # breath. Chosen conservatively: too aggressive and speech starts to sound clipped
 # together, which is worse than the silence it removed.
-SILENCE_THRESHOLD_DB = -35
+# -32 rather than -35: on shows with a studio hum or a room behind the voices the
+# pauses never fall to -35, and nothing was found to shorten.
+SILENCE_THRESHOLD_DB = -32
 # How these two combine is measured, not read from the manual (see SILENCE_SURVIVES_SECONDS
 # below): every pause longer than their sum is shortened to their sum, and shorter ones
 # are left alone. So the sum is the one number that matters -- the longest pause a
 # listener will hear. At 0.87 s the filter removed about one percent of a talk show,
 # which is not a feature anyone would notice; at 0.27 s, the old ffmpeg's behaviour,
-# speech sounded chopped. 0.42 s takes a sentence's pause down to a breath and costs a
-# talk show roughly six percent of its length.
-MIN_SILENCE_SECONDS = 0.25
+# speech sounded chopped. 0.42 s removed five or six percent overall but as little as
+# one percent of a show whose hosts do not pause. 0.30 s, with the level above, measured
+# on five real episodes: between 2.6 and 13 percent, about half as much again.
+#
+# How much there is to take depends far more on the show than on these numbers. A fast
+# two-hander has a median pause of a quarter of a second and no setting short of
+# clipping words finds much in it.
+MIN_SILENCE_SECONDS = 0.18
 # What is left where silence was removed. Cutting to nothing makes conversation sound
 # unnaturally rushed; leaving a beat keeps the rhythm of speech.
-SILENCE_KEEP_SECONDS = 0.15
+SILENCE_KEEP_SECONDS = 0.10
 # silenceremove judges silence over windows of this length (its default). It shows up as
 # an extra window's worth of each silence surviving the cut.
 DETECTION_WINDOW_SECONDS = 0.02
@@ -212,9 +219,9 @@ def recipe(trim: bool, normalize: bool) -> str | None:
     The number moves whenever the trim changes meaning, and files cut under the old
     meaning are rebuilt by not matching: "trim2" was per-sample detection, "trim3" the
     first cut by an ffmpeg whose filter keeps pauses whole, "trim4" the pause brought
-    down from 0.87 s to 0.42 s.
+    down from 0.87 s to 0.42 s, "trim5" to 0.30 s with silence judged at -32 dB.
     """
-    parts = [name for name, on in (("trim4", trim), ("normalize", normalize)) if on]
+    parts = [name for name, on in (("trim5", trim), ("normalize", normalize)) if on]
     return "+".join(parts) or None
 
 
